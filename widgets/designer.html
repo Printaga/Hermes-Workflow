@@ -207,9 +207,21 @@
   }
 
   // --------------------------------------------------------------- drawing
+  // SVG presentation attributes are parsed as attribute values, where var() is not valid —
+  // setAttribute("fill", "var(--card)") computes black. Paint values go through a style
+  // declaration instead; every other attribute stays a plain attribute.
+  var PAINT_ATTRS = { fill: 1, stroke: 1, "stop-color": 1 };
+
   function svgEl(name, attrs) {
     var el = document.createElementNS(SVG_NS, name);
-    Object.keys(attrs || {}).forEach(function (key) { el.setAttribute(key, attrs[key]); });
+    Object.keys(attrs || {}).forEach(function (key) {
+      var value = attrs[key];
+      if (PAINT_ATTRS[key] && String(value).indexOf("var(") >= 0) {
+        el.style.setProperty(key, value);
+      } else {
+        el.setAttribute(key, value);
+      }
+    });
     return el;
   }
 

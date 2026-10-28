@@ -76,6 +76,24 @@ def test_uses_host_theme_variables_only(html):
     assert "@import" not in html
 
 
+def test_svg_helper_routes_var_paints_through_inline_style(html):
+    """SVG presentation attributes do not resolve var(); a paint set that way is black.
+
+    The widget keeps the host token names (its page supplies them), but the paint must land
+    in a style declaration where var() is valid.
+    """
+    match = re.search(r"function svgEl\([^)]*\) \{(.*?)\n  \}", html, re.S)
+    assert match, "widget must define svgEl()"
+    body = match.group(1)
+    paint = re.search(r"PAINT\w*\s*=\s*\{([^}]*)\}", html.split("function svgEl")[0])
+    assert paint, "svgEl must name the attributes it treats as paint"
+    assert "fill" in paint.group(1) and "stroke" in paint.group(1)
+    assert 'indexOf("var(")' in body
+    assert "style.setProperty" in body
+    assert body.index('indexOf("var(")') < body.index("style.setProperty")
+    assert body.index("style.setProperty") < body.index("setAttribute")
+
+
 def test_validation_rules_are_ported(html):
     # The JS validator must carry the same demands as schema.py, in the same words.
     assert "'out.<node>.<field> <op> <value>'" in html

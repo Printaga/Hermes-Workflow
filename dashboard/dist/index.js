@@ -47,33 +47,37 @@
     '{"name":"untitled","nodes":[{"id":"trigger1","type":"trigger","trigger_mode":"manual","after":[]}]}';
   var BLANK = JSON.parse(BLANK_JSON);
 
+  // The host theme this tab renders under (LENS_0) has NO global --card/--border/
+  // --muted-foreground/--accent, and its --foreground is transparent (alpha 0). Derive the
+  // whole palette from tokens that DO exist, scoped to the shell so the rest of the
+  // dashboard is untouched.
   var CSS = [
-    ".vw-shell{display:flex;height:100%;min-height:420px;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--foreground,#d8d8d8);text-align:left}",
-    ".vw-rail{flex:0 0 190px;padding:10px 12px;border-right:1px solid var(--border,#3a3a3a);overflow:auto}",
-    ".vw-rail-title{margin:0 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground,#9a9a9a)}",
+    ".vw-shell{--vw-ink:var(--midground,#ffe6cb);--vw-dim:color-mix(in srgb,var(--midground,#ffe6cb) 72%,transparent);--vw-surface:color-mix(in srgb,var(--midground,#ffe6cb) 5%,var(--background,#041c1c));--vw-line:color-mix(in srgb,var(--midground,#ffe6cb) 16%,transparent);--vw-node:color-mix(in srgb,var(--midground,#ffe6cb) 7%,var(--background,#041c1c));--vw-accent:var(--series-output-token,#34d399);--vw-danger:#fb2c36;display:flex;height:100%;min-height:420px;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--vw-ink);text-align:left}",
+    ".vw-rail{flex:0 0 190px;padding:10px 12px;border-right:1px solid var(--vw-line);background:var(--vw-surface);overflow:auto}",
+    ".vw-rail-title{margin:0 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--vw-dim)}",
     ".vw-list{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}",
     ".vw-stage{flex:1 1 auto;min-width:0;display:flex}",
     ".vw-app{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;padding:8px 10px}",
-    ".vw-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:0 0 8px;border-bottom:1px solid var(--border,#3a3a3a)}",
+    ".vw-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:0 0 8px;border-bottom:1px solid var(--vw-line)}",
     ".vw-bar .vw-grow{flex:1 1 160px;min-width:110px}",
     ".vw-main{display:flex;flex:1 1 auto;min-height:0}",
-    ".vw-palette{flex:0 0 130px;padding:8px 10px 8px 0;border-right:1px solid var(--border,#3a3a3a)}",
+    ".vw-palette{flex:0 0 130px;padding:8px 10px 8px 0;border-right:1px solid var(--vw-line)}",
     ".vw-palette .vw-pill{display:block;width:100%;margin:0 0 6px;text-align:left}",
     ".vw-wrap{flex:1 1 auto;min-width:0;overflow:auto;padding:8px}",
-    ".vw-inspector{flex:0 0 250px;padding:8px 0 8px 10px;border-left:1px solid var(--border,#3a3a3a);overflow:auto}",
-    ".vw-errors,.vw-run{margin:0;padding:6px 0;border-top:1px solid var(--border,#3a3a3a);white-space:pre-wrap;color:var(--muted-foreground,#9a9a9a);max-height:150px;overflow:auto}",
-    ".vw-run h4{margin:2px 0 4px;font-size:12px;color:var(--foreground,#d8d8d8)}",
+    ".vw-inspector{flex:0 0 250px;padding:8px 0 8px 10px;border-left:1px solid var(--vw-line);overflow:auto}",
+    ".vw-errors,.vw-run{margin:0;padding:6px 0;border-top:1px solid var(--vw-line);white-space:pre-wrap;color:var(--vw-dim);max-height:150px;overflow:auto}",
+    ".vw-run h4{margin:2px 0 4px;font-size:12px;color:var(--vw-ink)}",
     ".vw-run pre{margin:2px 0 6px;white-space:pre-wrap;max-height:96px;overflow:auto}",
-    ".vw-pill,select,input[type=text],textarea{font:inherit;color:inherit;background:var(--card,#1e1e1e);border:1px solid var(--border,#3a3a3a);border-radius:6px;padding:3px 7px}",
+    ".vw-pill,select,input[type=text],textarea{font:inherit;color:inherit;background:var(--vw-node);border:1px solid var(--vw-line);border-radius:6px;padding:3px 7px}",
     ".vw-pill{cursor:pointer}",
-    ".vw-pill:hover{border-color:var(--accent,#6ea8fe)}",
-    ".vw-pill[aria-pressed=true]{border-color:var(--accent,#6ea8fe)}",
+    ".vw-pill:hover{border-color:var(--vw-accent)}",
+    ".vw-pill[aria-pressed=true]{border-color:var(--vw-accent)}",
     "input[type=text],textarea,select{width:100%;box-sizing:border-box}",
     "textarea{resize:vertical}",
-    ".vw-muted{color:var(--muted-foreground,#9a9a9a);margin:2px 0}",
-    ".vw-label{color:var(--muted-foreground,#9a9a9a);font-size:11px;margin:8px 0 2px}",
-    ".vw-hint,.vw-error{color:var(--muted-foreground,#9a9a9a);font-size:11px;margin:2px 0}",
-    ".vw-error{color:var(--destructive,#f87171)}",
+    ".vw-muted{color:var(--vw-dim);margin:2px 0}",
+    ".vw-label{color:var(--vw-dim);font-size:11px;margin:8px 0 2px}",
+    ".vw-hint,.vw-error{color:var(--vw-dim);font-size:11px;margin:2px 0}",
+    ".vw-error{color:var(--vw-danger)}",
     ".vw-canvas{display:block}",
     ".vw-canvas g.vw-node{cursor:grab}",
     ".vw-canvas g.vw-node:active{cursor:grabbing}",
@@ -131,10 +135,20 @@
     return text;
   }
 
+  // SVG presentation attributes are parsed as attribute values, where var() is not valid —
+  // setAttribute("fill", "var(--vw-node)") computes black. Paint values go through a style
+  // declaration instead; every other attribute stays a plain attribute.
+  var PAINT_ATTRS = { fill: 1, stroke: 1, "stop-color": 1 };
+
   function svgEl(name, attrs) {
     var el = document.createElementNS(SVG_NS, name);
     Object.keys(attrs || {}).forEach(function (key) {
-      el.setAttribute(key, attrs[key]);
+      var value = attrs[key];
+      if (PAINT_ATTRS[key] && String(value).indexOf("var(") >= 0) {
+        el.style.setProperty(key, value);
+      } else {
+        el.setAttribute(key, value);
+      }
     });
     return el;
   }
@@ -210,7 +224,7 @@
           svg.appendChild(svgEl("line", {
             x1: parent.x + NODE_W / 2, y1: parent.y + NODE_H / 2,
             x2: n.x + NODE_W / 2, y2: n.y + NODE_H / 2,
-            stroke: "var(--border)", "stroke-width": 1.5,
+            stroke: "var(--vw-line)", "stroke-width": 1.5,
           }));
         });
       });
@@ -225,15 +239,15 @@
         });
         g.appendChild(svgEl("rect", {
           width: NODE_W, height: NODE_H, rx: 6,
-          fill: "var(--card)",
-          stroke: isSelected || queued ? "var(--accent)" : "var(--border)",
+          fill: "var(--vw-node)",
+          stroke: isSelected || queued ? "var(--vw-accent)" : "var(--vw-line)",
           "stroke-width": isSelected ? 2 : 1,
         }));
-        var kind = svgEl("text", { x: 10, y: 16, "font-size": 9, fill: "var(--muted-foreground)" });
+        var kind = svgEl("text", { x: 10, y: 16, "font-size": 9, fill: "var(--vw-dim)" });
         kind.textContent = String(n.type).toUpperCase();
-        var id = svgEl("text", { x: 10, y: 32, "font-size": 12, fill: "var(--foreground)" });
+        var id = svgEl("text", { x: 10, y: 32, "font-size": 12, fill: "var(--vw-ink)" });
         id.textContent = n.id;
-        var sub = svgEl("text", { x: 10, y: 46, "font-size": 10, fill: "var(--muted-foreground)" });
+        var sub = svgEl("text", { x: 10, y: 46, "font-size": 10, fill: "var(--vw-dim)" });
         sub.textContent = preview(n);
         g.appendChild(kind);
         g.appendChild(id);

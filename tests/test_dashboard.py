@@ -186,3 +186,51 @@ def test_entry_embeds_a_valid_blank_graph(entry):
     blank = json.loads(match.group(1))
     assert [n["id"] for n in blank["nodes"]] == ["trigger1"]
     assert validate_designer_graph(blank) == []
+
+
+# ------------------------------------------------------------ canvas legibility
+# Two independent bugs made the canvas compute black on the host's LENS_0 theme:
+#  1. SVG presentation attributes do not resolve var() — only declarations do. A paint set
+#     with setAttribute("fill", "var(--card)") is invalid and falls back to black.
+#  2. The host theme has no global --card/--border/--muted-foreground/--accent, and its
+#     --foreground is transparent (alpha 0), so even resolving them would paint nothing.
+UNSAFE_TOKENS = ("foreground", "border", "card", "accent", "muted-foreground", "destructive")
+
+SCOPED_TOKENS = (
+    "--vw-ink:var(--midground,#ffe6cb)",
+    "--vw-dim:color-mix(in srgb,var(--midground,#ffe6cb) 72%,transparent)",
+    "--vw-surface:color-mix(in srgb,var(--midground,#ffe6cb) 5%,var(--background,#041c1c))",
+    "--vw-line:color-mix(in srgb,var(--midground,#ffe6cb) 16%,transparent)",
+    "--vw-node:color-mix(in srgb,var(--midground,#ffe6cb) 7%,var(--background,#041c1c))",
+    "--vw-accent:var(--series-output-token,#34d399)",
+    "--vw-danger:#fb2c36",
+)
+
+
+def _function_body(source: str, name: str) -> str:
+    """The body of ``function <name>(...) { ... }`` — enough for a source assertion."""
+    match = re.search(r"function " + re.escape(name) + r"\([^)]*\) \{(.*?)\n  \}", source, re.S)
+    assert match, f"entry must define function {name}()"
+    return match.group(1)
+
+
+def test_entry_svg_helper_routes_var_paints_through_inline_style(entry):
+    """A var() paint must become a declaration, never a presentation attribute."""
+    body = _function_body(entry, "svgEl")
+    paint = re.search(r"PAINT\w*\s*=\s*\{([^}]*)\}", entry.split("function svgEl")[0])
+    assert paint, "svgEl must name the attributes it treats as paint"
+    assert "fill" in paint.group(1) and "stroke" in paint.group(1)
+    assert 'indexOf("var(")' in body, "the var() case must be detected explicitly"
+    assert "style.setProperty" in body, "a var() paint must be set as an inline style declaration"
+    assert body.index('indexOf("var(")') < body.index("style.setProperty")
+    assert body.index("style.setProperty") < body.index("setAttribute"), (
+        "setAttribute must be the else-branch for plain values only"
+    )
+
+
+def test_entry_uses_only_scoped_readable_tokens(entry):
+    for token in SCOPED_TOKENS:
+        assert token in entry, f"entry must define {token} on .vw-shell"
+    assert ".vw-shell{" in entry, "the scoped tokens belong on .vw-shell, not :root"
+    unsafe = re.findall(r"var\(\s*--(" + "|".join(UNSAFE_TOKENS) + r")\b", entry)
+    assert not unsafe, f"entry references host tokens that are absent/transparent here: {unsafe}"
