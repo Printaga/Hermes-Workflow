@@ -13,3 +13,8 @@ testpaths = ["tests"]
 # `python -m pytest` puts CWD on sys.path but bare `pytest` does not; pin the plugin root so
 # `import visual_workflow_hermes` resolves either way.
 pythonpath = ["."]
+
+[tool.setuptools]
+# Flat layout also holds non-package dirs (widgets/, examples/, tests/);
+# declare the one real package so enable-time `uv sync` builds cleanly.
+packages = ["visual_workflow_hermes"]
