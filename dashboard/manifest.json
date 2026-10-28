@@ -1,0 +1,13 @@
+{
+  "name": "visual-workflow",
+  "label": "Workflows",
+  "description": "Design and run visual agent workflows — Trigger, Agent, Condition, Approval and Output nodes on a canvas.",
+  "icon": "GitBranch",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/workflows",
+    "position": "end"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}
