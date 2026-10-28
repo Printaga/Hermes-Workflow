@@ -1,0 +1,10 @@
+{
+  "name": "approval-demo",
+  "nodes": [
+    {"id": "trigger1", "type": "trigger", "trigger_mode": "manual", "after": []},
+    {"id": "draft", "type": "agent", "prompt": "Draft a release note.", "after": ["trigger1"]},
+    {"id": "big_enough", "type": "condition", "expression": "out.draft.word_count > 20", "after": ["draft"]},
+    {"id": "human_ok", "type": "approval", "question": "Ship this release note?", "options": ["ship", "edit"], "after": ["big_enough"]},
+    {"id": "out", "type": "output", "after": ["human_ok"]}
+  ]
+}
