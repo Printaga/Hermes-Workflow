@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "visual-workflow-hermes"
+version = "0.1.0"
+description = "Visual agent-workflow designer plugin for Hermes"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `python -m pytest` puts CWD on sys.path but bare `pytest` does not; pin the plugin root so
+# `import visual_workflow_hermes` resolves either way.
+pythonpath = ["."]
