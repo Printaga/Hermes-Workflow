@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>visual workflow designer</title>
+<style>
+  /* Theme comes from the host page. No page background, no webfonts. */
+  html, body { margin: 0; height: 100%; }
+  body {
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--foreground, #d8d8d8);
+    text-align: left;
+  }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  #bar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid var(--border, #3a3a3a);
+  }
+  #bar .grow { flex: 1 1 180px; min-width: 120px; }
+  #main { display: flex; flex: 1 1 auto; min-height: 0; }
+  #palette {
+    width: 150px; flex: 0 0 150px; padding: 8px 10px 8px 0;
+    border-right: 1px solid var(--border, #3a3a3a);
+  }
+  #canvaswrap { flex: 1 1 auto; overflow: auto; padding: 8px; }
+  #inspector {
+    width: 258px; flex: 0 0 258px; padding: 8px 0 8px 10px;
+    border-left: 1px solid var(--border, #3a3a3a); overflow: auto;
+  }
+  #errors {
+    margin: 0; padding: 6px 0; max-height: 108px; overflow: auto;
+    white-space: pre-wrap; border-top: 1px solid var(--border, #3a3a3a);
+    color: var(--muted-foreground, #9a9a9a);
+  }
+  button.pill, select, input[type=text], textarea {
+    font: inherit; color: inherit; background: var(--card, #1e1e1e);
+    border: 1px solid var(--border, #3a3a3a); border-radius: 6px;
+    padding: 3px 7px;
+  }
+  button.pill { cursor: pointer; }
+  button.pill:hover { border-color: var(--accent, #6ea8fe); }
+  #palette button.pill { display: block; width: 100%; margin: 0 0 6px; text-align: left; }
+  input[type=text], textarea, select { width: 100%; box-sizing: border-box; }
+  textarea { resize: vertical; }
+  .muted { color: var(--muted-foreground, #9a9a9a); }
+  .label { color: var(--muted-foreground, #9a9a9a); font-size: 11px; margin: 8px 0 2px; }
+  .hint { color: var(--muted-foreground, #9a9a9a); font-size: 11px; margin: 2px 0 0; }
+  #canvas { display: block; }
+  #canvas .node { cursor: grab; }
+  #canvas .node:active { cursor: grabbing; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bar">
+    <input id="name" class="grow" type="text" value="hello-world" aria-label="design name">
+    <button class="pill" id="validate" type="button">Validate</button>
+    <button class="pill" id="copy" type="button">Copy JSON</button>
+    <button class="pill" id="load" type="button">Load example</button>
+    <button class="pill" id="connect" type="button">Connect</button>
+    <button class="pill" id="save" type="button" data-hermes-send="workflow save">Save to Hermes</button>
+  </div>
+  <div id="main">
+    <div id="palette">
+      <!-- click adds at a free slot, drag drops at the pointer -->
+      <button class="pill" type="button" draggable="true" data-kind="trigger">Trigger</button>
+      <button class="pill" type="button" draggable="true" data-kind="agent">Agent</button>
+      <button class="pill" type="button" draggable="true" data-kind="condition">Condition</button>
+      <button class="pill" type="button" draggable="true" data-kind="approval">Approval</button>
+      <button class="pill" type="button" draggable="true" data-kind="output">Output</button>
+      <p class="hint">Click two nodes, then Connect.<br>Delete removes the selection.</p>
+    </div>
+    <div id="canvaswrap">
+      <svg id="canvas" width="900" height="560" role="img" aria-label="workflow canvas"></svg>
+    </div>
+    <div id="inspector"></div>
+  </div>
+  <pre id="errors"></pre>
+</div>
+
+<script id="default-graph" type="application/json">
+{"name":"hello-world","nodes":[
+  {"id":"trigger1","type":"trigger","trigger_mode":"manual","after":[]},
+  {"id":"writer","type":"agent","prompt":"Write a haiku about rivers.","after":["trigger1"]},
+  {"id":"out","type":"output","after":["writer"]}
+]}
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var KINDS = ["trigger", "agent", "condition", "approval", "output"];
+  var MODES = ["manual", "schedule", "webhook"];
+  var MAX_NODES = 50;
+  var NODE_W = 168, NODE_H = 56;
+  var REQUIRED = {
+    trigger: ["trigger_mode"], agent: ["prompt"], condition: ["expression"],
+    approval: ["question"], output: []
+  };
+  var DEFAULT_GRAPH = JSON.parse(document.getElementById("default-graph").textContent);
+
+  var graph = clone(DEFAULT_GRAPH);
+  var selected = null;
+  var linkQueue = [];
+
+  function clone(value) { return JSON.parse(JSON.stringify(value)); }
+  function node(id) { return graph.nodes.filter(function (n) { return n.id === id; })[0] || null; }
+
+  // ---------------------------------------------------------------- layout
+  function layout() {
+    graph.nodes.forEach(function (n, i) {
+      if (typeof n.x !== "number" || typeof n.y !== "number") {
+        n.x = 30 + (i % 4) * 196;
+        n.y = 40 + Math.floor(i / 4) * 128;
+      }
+    });
+  }
+
+  // ------------------------------------------------------- validator port
+  // Same demands as visual_workflow_hermes/schema.py, worded identically so a design
+  // that passes here passes in Python.
+  function validateGraph(g) {
+    var errors = [];
+    if (!g || typeof g !== "object" || Array.isArray(g)) {
+      return [{ node: "", field: "graph", msg: "graph must be an object" }];
+    }
+    var nodes = Array.isArray(g.nodes) ? g.nodes : [];
+    if (!nodes.length) {
+      return [{ node: "", field: "nodes", msg: "workflow needs at least one node" }];
+    }
+    if (nodes.length > MAX_NODES) {
+      errors.push({ node: "", field: "nodes",
+        msg: "design capped at " + MAX_NODES + " nodes, got " + nodes.length });
+    }
+    var ids = nodes.map(function (n) { return n && n.id; });
+    var unique = ids.filter(function (id, i) { return ids.indexOf(id) === i; });
+    if (unique.length !== ids.length) {
+      errors.push({ node: "", field: "nodes", msg: "node ids must be unique" });
+    }
+    var triggers = nodes.filter(function (n) { return n && n.type === "trigger"; });
+    if (triggers.length !== 1) {
+      errors.push({ node: "", field: "trigger",
+        msg: "workflow needs exactly one trigger, found " + triggers.length });
+    }
+    nodes.forEach(function (n) {
+      if (!n || typeof n !== "object") {
+        errors.push({ node: "", field: "node", msg: "node must be an object" });
+        return;
+      }
+      var nid = n.id || "", kind = n.type;
+      if (KINDS.indexOf(kind) < 0) {
+        errors.push({ node: nid, field: "type",
+          msg: "unknown node type '" + kind + "', expected one of " + KINDS.join(", ") });
+        return;
+      }
+      REQUIRED[kind].forEach(function (field) {
+        if (!n[field]) {
+          errors.push({ node: nid, field: field,
+            msg: kind + " node '" + nid + "' needs non-empty '" + field + "'" });
+        }
+      });
+      if (kind === "trigger" && MODES.indexOf(n.trigger_mode) < 0) {
+        errors.push({ node: nid, field: "trigger_mode",
+          msg: "trigger_mode must be one of " + MODES.join(", ") });
+      }
+      (n.after || []).forEach(function (dep) {
+        if (ids.indexOf(dep) < 0) {
+          errors.push({ node: nid, field: "after", msg: "unknown dependency '" + dep + "'" });
+        } else if (dep === nid) {
+          errors.push({ node: nid, field: "after", msg: "node cannot depend on itself" });
+        }
+      });
+      var WHEN = /^out\.[A-Za-z0-9_.-]+\s*(==|!=|>=|<=|>|<)\s*.+$/;
+      if (kind === "condition" && n.expression && !WHEN.test(String(n.expression).trim())) {
+        errors.push({ node: nid, field: "expression",
+          msg: "expression must look like 'out.<node>.<field> <op> <value>' (op: == != > >= < <=)" });
+      }
+    });
+    if (!errors.length) {
+      var visiting = {}, done = {};
+      function visit(nid, stack) {
+        if (done[nid]) { return null; }
+        if (visiting[nid]) { return stack.concat([nid]); }
+        visiting[nid] = true;
+        var current = nodes.filter(function (n) { return n && n.id === nid; })[0];
+        var deps = (current && current.after) || [];
+        for (var i = 0; i < deps.length; i += 1) {
+          var cycle = visit(deps[i], stack.concat([nid]));
+          if (cycle) { return cycle; }
+        }
+        delete visiting[nid];
+        done[nid] = true;
+        return null;
+      }
+      for (var i = 0; i < ids.length; i += 1) {
+        var cycle = visit(ids[i], []);
+        if (cycle) {
+          errors.push({ node: cycle[0], field: "after",
+            msg: "dependency cycle: " + cycle.join(" -> ") });
+          break;
+        }
+      }
+    }
+    return errors;
+  }
+
+  // --------------------------------------------------------------- drawing
+  function svgEl(name, attrs) {
+    var el = document.createElementNS(SVG_NS, name);
+    Object.keys(attrs || {}).forEach(function (key) { el.setAttribute(key, attrs[key]); });
+    return el;
+  }
+
+  function preview(n) {
+    var text =
+      n.type === "agent" ? (n.prompt || "") :
+      n.type === "condition" ? (n.expression || "") :
+      n.type === "approval" ? (n.question || "") :
+      n.type === "trigger" ? (n.trigger_mode || "") + (n.schedule ? " " + n.schedule : "") :
+      (n.after || []).join(", ");
+    text = String(text).replace(/\s+/g, " ").trim();
+    return text.length > 26 ? text.slice(0, 25) + "…" : text;
+  }
+
+  function draw() {
+    var svg = document.getElementById("canvas");
+    while (svg.firstChild) { svg.removeChild(svg.firstChild); }
+    var byId = {};
+    graph.nodes.forEach(function (n) { byId[n.id] = n; });
+
+    graph.nodes.forEach(function (n) {
+      (n.after || []).forEach(function (dep) {
+        var parent = byId[dep];
+        if (!parent) { return; }
+        svg.appendChild(svgEl("line", {
+          x1: parent.x + NODE_W / 2, y1: parent.y + NODE_H / 2,
+          x2: n.x + NODE_W / 2, y2: n.y + NODE_H / 2,
+          stroke: "var(--border)", "stroke-width": 1.5
+        }));
+      });
+    });
+
+    graph.nodes.forEach(function (n) {
+      var isSelected = n.id === selected;
+      var queued = linkQueue.indexOf(n.id) >= 0;
+      var g = svgEl("g", { transform: "translate(" + n.x + "," + n.y + ")", "class": "node" });
+      g.setAttribute("data-id", n.id);
+      g.appendChild(svgEl("rect", {
+        width: NODE_W, height: NODE_H, rx: 6,
+        fill: "var(--card)",
+        stroke: (isSelected || queued) ? "var(--accent)" : "var(--border)",
+        "stroke-width": isSelected ? 2 : 1
+      }));
+      var kind = svgEl("text", { x: 10, y: 16, "font-size": 9, fill: "var(--muted-foreground)" });
+      kind.textContent = String(n.type).toUpperCase();
+      var id = svgEl("text", { x: 10, y: 32, "font-size": 12, fill: "var(--foreground)" });
+      id.textContent = n.id;
+      var sub = svgEl("text", { x: 10, y: 46, "font-size": 10, fill: "var(--muted-foreground)" });
+      sub.textContent = preview(n);
+      g.appendChild(kind); g.appendChild(id); g.appendChild(sub);
+      wireNode(g, n);
+      svg.appendChild(g);
+    });
+  }
+
+  function svgPoint(ev) {
+    var svg = document.getElementById("canvas");
+    var pt = svg.createSVGPoint();
+    pt.x = ev.clientX; pt.y = ev.clientY;
+    var matrix = svg.getScreenCTM();
+    return matrix ? pt.matrixTransform(matrix.inverse()) : { x: ev.clientX, y: ev.clientY };
+  }
+
+  function wireNode(g, n) {
+    g.addEventListener("mousedown", function (ev) {
+      if (ev.button !== 0) { return; }
+      ev.preventDefault();
+      var start = svgPoint(ev);
+      var offset = { x: start.x - n.x, y: start.y - n.y };
+      var moved = false;
+      function onMove(moveEv) {
+        var p = svgPoint(moveEv);
+        if (Math.abs(p.x - start.x) > 3 || Math.abs(p.y - start.y) > 3) { moved = true; }
+        n.x = Math.max(0, Math.round(p.x - offset.x));
+        n.y = Math.max(0, Math.round(p.y - offset.y));
+        draw();
+      }
+      function onUp() {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        if (!moved) { pick(n.id); }
+      }
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  }
+
+  // ------------------------------------------------------------- selection
+  function pick(id) {
+    selected = id;
+    // The queue is "the two most recently clicked nodes", parent first. Clicking a node
+    // again must not drop it (that would make click-click-Connect impossible).
+    linkQueue = linkQueue.filter(function (x) { return x !== id; }).concat([id]).slice(-2);
+    buildInspector();
+    draw();
+  }
+
+  function connect() {
+    if (linkQueue.length < 2) {
+      note("Click two nodes on the canvas, then Connect.");
+      return;
+    }
+    var from = linkQueue[0], to = linkQueue[1];
+    var target = node(to);
+    if (!target) { return; }
+    target.after = target.after || [];
+    if (target.after.indexOf(from) < 0) { target.after.push(from); }
+    note("");
+    draw();
+  }
+
+  // ------------------------------------------------------------- inspector
+  function field(labelText, control) {
+    var wrap = document.createElement("div");
+    var label = document.createElement("div");
+    label.className = "label";
+    label.textContent = labelText;
+    wrap.appendChild(label);
+    wrap.appendChild(control);
+    return wrap;
+  }
+
+  function textInput(value, onInput, placeholder) {
+    var input = document.createElement("input");
+    input.type = "text";
+    input.value = value || "";
+    if (placeholder) { input.placeholder = placeholder; }
+    input.addEventListener("input", function () { onInput(input.value); });
+    return input;
+  }
+
+  function textArea(value, onInput, rows) {
+    var area = document.createElement("textarea");
+    area.rows = rows || 4;
+    area.value = value || "";
+    area.addEventListener("input", function () { onInput(area.value); });
+    return area;
+  }
+
+  function buildInspector() {
+    var box = document.getElementById("inspector");
+    box.textContent = "";
+    var current = selected ? node(selected) : null;
+    if (!current) {
+      var empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "Select a node to edit it.";
+      box.appendChild(empty);
+      return;
+    }
+    var head = document.createElement("p");
+    head.className = "muted";
+    head.textContent = current.id + " · " + current.type;
+    box.appendChild(head);
+
+    if (current.type === "trigger") {
+      var select = document.createElement("select");
+      MODES.forEach(function (mode) {
+        var option = document.createElement("option");
+        option.value = mode;
+        option.textContent = mode;
+        if (current.trigger_mode === mode) { option.selected = true; }
+        select.appendChild(option);
+      });
+      select.addEventListener("change", function () {
+        current.trigger_mode = select.value;
+        draw();
+      });
+      box.appendChild(field("trigger_mode", select));
+      box.appendChild(field("schedule (cron)", textInput(current.schedule || "", function (v) {
+        current.schedule = v; draw();
+      }, "0 9 * * 1-5")));
+      box.appendChild(field("webhook_path", textInput(current.webhook_path || "", function (v) {
+        current.webhook_path = v; draw();
+      }, "/hooks/my-workflow")));
+    } else if (current.type === "agent") {
+      box.appendChild(field("prompt", textArea(current.prompt || "", function (v) {
+        current.prompt = v; draw();
+      }, 5)));
+      box.appendChild(field("model (optional)", textInput(current.model || "", function (v) {
+        current.model = v;
+      })));
+      box.appendChild(field("provider (optional)", textInput(current.provider || "", function (v) {
+        current.provider = v;
+      })));
+    } else if (current.type === "condition") {
+      box.appendChild(field("expression", textInput(current.expression || "", function (v) {
+        current.expression = v; draw();
+      }, "out.draft.word_count > 20")));
+      var hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent = "Must start with out.<node>.<field> <op> <value>.";
+      box.appendChild(hint);
+    } else if (current.type === "approval") {
+      box.appendChild(field("question", textArea(current.question || "", function (v) {
+        current.question = v; draw();
+      }, 3)));
+      box.appendChild(field("options (comma separated)", textInput(
+        (current.options || []).join(", "),
+        function (v) {
+          var list = v.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+          if (list.length) { current.options = list; } else { delete current.options; }
+          draw();
+        }, "ship, edit")));
+    } else if (current.type === "output") {
+      var parents = document.createElement("p");
+      parents.className = "muted";
+      parents.textContent = (current.after || []).length
+        ? (current.after || []).join(", ")
+        : "(no parents — this output collects nothing)";
+      box.appendChild(field("parents", parents));
+    }
+  }
+
+  // -------------------------------------------------------------- feedback
+  function note(message) {
+    var box = document.getElementById("errors");
+    box.textContent = message || "";
+  }
+
+  function showErrors(errors) {
+    var box = document.getElementById("errors");
+    if (!errors.length) {
+      box.textContent = "valid · " + graph.nodes.length + " node(s)";
+      return;
+    }
+    box.textContent = errors.map(function (e) {
+      return (e.node ? e.node + ": " : "") + e.field + " — " + e.msg;
+    }).join("\n");
+  }
+
+  // -------------------------------------------------------------- commands
+  function addNode(kind, x, y) {
+    var index = 0, id;
+    do {
+      index += 1;
+      id = kind + index;
+    } while (node(id));
+    var fresh = { id: id, type: kind, after: [] };
+    if (kind === "trigger") { fresh.trigger_mode = "manual"; }
+    if (kind === "agent") { fresh.prompt = ""; }
+    if (kind === "condition") { fresh.expression = ""; }
+    if (kind === "approval") { fresh.question = ""; }
+    if (typeof x === "number" && typeof y === "number") {
+      fresh.x = Math.max(0, Math.round(x - NODE_W / 2));
+      fresh.y = Math.max(0, Math.round(y - NODE_H / 2));
+    } else {
+      var slot = graph.nodes.length;
+      fresh.x = 30 + (slot % 4) * 196;
+      fresh.y = 40 + Math.floor(slot / 4) * 128;
+    }
+    graph.nodes.push(fresh);
+    selected = id;
+    linkQueue = [id];
+    buildInspector();
+    draw();
+  }
+
+  function copyText(text) {
+    return new Promise(function (resolve) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { resolve(true); },
+          function () { resolve(legacyCopy(text)); });
+      } else {
+        resolve(legacyCopy(text));
+      }
+    });
+  }
+
+  function legacyCopy(text) {
+    var area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "readonly");
+    document.body.appendChild(area);
+    area.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (err) { ok = false; }
+    document.body.removeChild(area);
+    return ok;
+  }
+
+  function designerJson() {
+    return JSON.stringify({ name: graph.name || "workflow", nodes: graph.nodes }, null, 2);
+  }
+
+  function saveToHermes() {
+    var errors = validateGraph(graph);
+    showErrors(errors);
+    if (errors.length) { return; }
+    var payload = "/workflow save " + (graph.name || "workflow") + " " + JSON.stringify(
+      { name: graph.name || "workflow", nodes: graph.nodes });
+    if (typeof window.hermes !== "undefined" && window.hermes &&
+        typeof window.hermes.send === "function") {
+      window.hermes.send(payload);
+      note("Sent to Hermes: /workflow save " + (graph.name || "workflow"));
+      return;
+    }
+    copyText(payload).then(function (ok) {
+      note(ok
+        ? "No Hermes host here — copied the save command; paste it into chat."
+        : "No Hermes host and clipboard is blocked — use Copy JSON instead.");
+    });
+  }
+
+  function loadExample() {
+    graph = clone(DEFAULT_GRAPH);
+    layout();
+    selected = null;
+    linkQueue = [];
+    document.getElementById("name").value = graph.name;
+    buildInspector();
+    draw();
+    showErrors([]);
+  }
+
+  // ------------------------------------------------------------- wiring up
+  function wire() {
+    document.getElementById("name").addEventListener("input", function (ev) {
+      graph.name = ev.target.value.trim();
+    });
+
+    document.getElementById("validate").addEventListener("click", function () {
+      showErrors(validateGraph(graph));
+    });
+
+    document.getElementById("copy").addEventListener("click", function () {
+      var text = designerJson();
+      copyText(text).then(function (ok) {
+        note(ok ? "designer JSON copied (" + text.length + " chars)"
+          : "clipboard blocked — select the JSON in the console instead");
+        if (!ok && window.console) { console.log(text); }
+      });
+    });
+
+    document.getElementById("load").addEventListener("click", loadExample);
+    document.getElementById("connect").addEventListener("click", connect);
+    document.getElementById("save").addEventListener("click", saveToHermes);
+
+    Array.prototype.forEach.call(
+      document.querySelectorAll("#palette [data-kind]"),
+      function (button) {
+        var kind = button.getAttribute("data-kind");
+        button.addEventListener("click", function () { addNode(kind); });
+        button.addEventListener("dragstart", function (ev) {
+          ev.dataTransfer.setData("text/plain", kind);
+          ev.dataTransfer.effectAllowed = "copy";
+        });
+      }
+    );
+
+    var wrap = document.getElementById("canvaswrap");
+    wrap.addEventListener("dragover", function (ev) {
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "copy";
+    });
+    wrap.addEventListener("drop", function (ev) {
+      ev.preventDefault();
+      var kind = ev.dataTransfer.getData("text/plain");
+      if (KINDS.indexOf(kind) < 0) { return; }
+      var p = svgPoint(ev);
+      addNode(kind, p.x, p.y);
+    });
+
+    document.addEventListener("keydown", function (ev) {
+      var target = ev.target || {};
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || "")) { return; }
+      if (ev.key !== "Delete" && ev.key !== "Backspace") { return; }
+      if (!selected) { return; }
+      ev.preventDefault();
+      var removed = selected;
+      graph.nodes = graph.nodes.filter(function (n) { return n.id !== removed; });
+      graph.nodes.forEach(function (n) {
+        n.after = (n.after || []).filter(function (dep) { return dep !== removed; });
+      });
+      selected = null;
+      linkQueue = [];
+      buildInspector();
+      draw();
+      note("removed " + removed);
+    });
+  }
+
+  wire();
+  layout();
+  buildInspector();
+  draw();
+}());
+</script>
+</body>
+</html>
