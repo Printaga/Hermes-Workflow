@@ -85,3 +85,19 @@ def test_handler_accepts_a_bare_string_argument():
     """The host dispatcher calls ``handler(raw_args: str)`` — bound method, one positional."""
     ctx = _registered()
     assert isinstance(ctx.commands["workflow"]["handler"](""), str)
+
+
+def test_registered_tool_handlers_return_json_strings():
+    """Host contract: handler(args) -> str. The live dispatcher rejected dicts
+    (tool_result_contract), so every registered handler must return a JSON str."""
+    import json
+
+    ctx = _registered()
+    graph = {"name": "t", "nodes": [
+        {"id": "trigger1", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "a", "type": "agent", "prompt": "hi", "after": ["trigger1"]},
+        {"id": "out", "type": "output", "after": ["a"]},
+    ]}
+    out = ctx.tools["workflow_design_validate"]["handler"]({"graph": graph})
+    assert isinstance(out, str), type(out)
+    assert json.loads(out) == {"ok": True, "errors": []}

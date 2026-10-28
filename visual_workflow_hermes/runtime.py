@@ -1,8 +1,10 @@
 """Slash-command + tool handlers. Storage lives in store.py, validation in schema.py,
 plan building in convert.py, execution in runner.py.
 
-Tool handlers take the host dispatch shape ``handler(args: dict, **kwargs) -> dict`` —
-``tools.registry`` calls them as ``entry.handler(args, **kwargs)``.
+``tool_*`` methods take the host dispatch shape ``handler(args: dict, **kwargs)``
+and return plain dicts for internal callers (slash-command paths, unit tests).
+The ``register()`` entry point wraps them to the real host result contract
+``-> str`` (JSON); the dispatcher rejects any other return type.
 """
 from __future__ import annotations
 

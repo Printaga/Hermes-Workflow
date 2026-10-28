@@ -15,6 +15,23 @@ logger = logging.getLogger(__name__)
 
 TOOLSET = "visual-workflow"
 
+
+def _as_json(handler):
+    """Adapt a dict-returning tool method to the host contract ``(args) -> str``.
+
+    The host tool dispatcher rejects non-str results (tool_result_contract);
+    in-tree tools return ``json.dumps(...)``. Internal callers (slash-command
+    paths, unit tests) keep calling the raw ``tool_*`` methods for dicts.
+    """
+    import functools
+    import json
+
+    @functools.wraps(handler)
+    def wrapper(args, **kwargs):
+        return json.dumps(handler(args, **kwargs))
+
+    return wrapper
+
 _SAVE_SCHEMA = {
     "name": "workflow_design_save",
     "description": (
@@ -131,7 +148,7 @@ def register(ctx) -> None:
             name=schema["name"],
             toolset=TOOLSET,
             schema=schema,
-            handler=handler,
+            handler=_as_json(handler),
             description=schema["description"],
             emoji="🧩",
         )
