@@ -497,3 +497,52 @@ def test_entry_uses_only_scoped_readable_tokens(entry):
     assert ".vw-shell{" in entry, "the scoped tokens belong on .vw-shell, not :root"
     unsafe = re.findall(r"var\(\s*--(" + "|".join(UNSAFE_TOKENS) + r")\b", entry)
     assert not unsafe, f"entry references host tokens that are absent/transparent here: {unsafe}"
+
+
+# ------------------------------------------------------------ canvas layout
+# At 1280px with both Hermes sidebars open the tab is ~760px wide. A 130px node palette plus a
+# 250px inspector left the canvas unusable, so node creation moved to a top bar and the
+# inspector starts collapsed. Asserted structurally: the toolbar must precede the <svg>, the
+# left rail must be gone, and the collapsed-by-default class must be on the app root.
+def test_canvas_puts_node_creation_in_a_top_bar(entry):
+    assert 'class="vw-kit"' in entry, "node creation belongs in the top bar"
+    assert entry.index('class="vw-kit"') < entry.index('data-vw="canvas"'), (
+        "the node bar must come before the canvas, not beside it"
+    )
+    assert "vw-palette" not in entry, "the left palette rail must be gone"
+    kit = entry[entry.index('class="vw-kit"'):entry.index('class="vw-bar"')]
+    assert kit.count('data-kind="') == 5, "one button per node kind"
+    assert kit.count('class="ico"') == 5, "each button needs an icon next to its label"
+
+
+def test_canvas_has_no_left_rail_and_the_shell_is_one_column(entry):
+    assert ".vw-rail{" not in entry and 'className: "vw-rail"' not in entry
+    assert "flex-direction:column" in entry.split(".vw-shell{", 1)[1].split("}", 1)[0]
+    assert '<select class="vw-grow" data-vw="designs"' in entry or '"vw-grow",' in entry, (
+        "saved workflows belong in the top row, not a 190px rail"
+    )
+
+
+def test_inspector_starts_collapsed_and_can_be_closed(entry):
+    assert 'class="vw-app vw-insp-collapsed"' in entry, "collapsed is the default state"
+    assert 'data-vw="insp-toggle"' in entry and 'aria-expanded="false"' in entry
+    assert ".vw-app.vw-insp-collapsed .vw-inspector{width:30px" in entry
+    assert ".vw-app.vw-insp-collapsed .vw-insp-body{display:none}" in entry
+    assert "function setInspector(open)" in entry
+    assert "setInspector(true)" in entry, "selecting a node must expand the panel"
+
+
+def test_canvas_fits_its_width_and_recomputes_on_resize(entry):
+    assert "function fit()" in entry
+    assert 'setAttribute("viewBox"' in entry
+    assert "preserveAspectRatio" in entry
+    assert "ResizeObserver" in entry, "opening a sidebar must re-fit, not clip"
+    assert "fitLocked" in entry, "a drag must not rescale the sheet under the pointer"
+
+
+def test_nodes_are_compact_with_a_two_line_preview(entry):
+    assert "var NODE_W = 150;" in entry and "var NODE_H = 58;" in entry
+    assert "function previewLines(n)" in entry
+    assert "previewLines(n).forEach" in entry
+    assert "lines.length === 2" in entry
+    assert "preview(n)" not in entry, "the old one-line preview is gone"

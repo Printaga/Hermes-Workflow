@@ -251,3 +251,44 @@ def test_register_contributes_the_sidebar_row(registration):
 def test_register_only_touches_the_two_areas_and_does_not_fetch_eagerly(registration):
     assert {c["area"] for c in registration["calls"]} == {"routes", "sidebar.nav"}
     assert registration["restCalls"] == [], "register() must not call the backend before the page mounts"
+
+
+# ------------------------------------------------------------ canvas layout
+# Same brief as the dashboard tab (all three canvases stay in sync): node creation is a top
+# bar, the inspector is a collapsible strip, and the canvas fits its width.
+def test_canvas_puts_node_creation_in_a_top_bar(source):
+    assert 'class="vw-kit"' in source
+    assert source.index('class="vw-kit"') < source.index('data-vw="canvas"')
+    assert "vw-palette" not in source, "the left palette rail must be gone"
+    kit = source[source.index('class="vw-kit"'):source.index('class="vw-bar"')]
+    assert kit.count('data-kind="') == 5
+    assert kit.count('class="ico"') == 5
+
+
+def test_saved_workflows_move_into_the_top_row(source):
+    assert '<select class="vw-grow" data-vw="designs"' in source
+    assert "function renderDesigns()" in source
+    assert "renderRail" not in source
+    assert ".vw-rail{" not in source, "the 190px rail is what squeezed the canvas"
+
+
+def test_inspector_starts_collapsed_and_can_be_closed(source):
+    assert 'class="vw-app vw-insp-collapsed"' in source
+    assert 'data-vw="insp-toggle"' in source and 'aria-expanded="false"' in source
+    assert ".vw-app.vw-insp-collapsed .vw-inspector{width:30px" in source
+    assert "function setInspector(open)" in source
+    assert "setInspector(true)" in source
+
+
+def test_canvas_fits_its_width_and_recomputes_on_resize(source):
+    assert "function fit()" in source
+    assert 'setAttribute("viewBox"' in source
+    assert "ResizeObserver" in source
+    assert "fitLocked" in source
+
+
+def test_nodes_are_compact_with_a_two_line_preview(source):
+    assert "const NODE_W = 150;" in source and "const NODE_H = 58;" in source
+    assert "function previewLines(n)" in source
+    assert "previewLines(n).forEach" in source
+    assert "lines.length === 2" in source

@@ -153,3 +153,37 @@ def test_schedule_fields_say_this_file_cannot_create_the_job(html):
     """A cron expression here is a note, not a job — the widget must not imply otherwise."""
     assert "This standalone designer only records the schedule" in html
     assert 'TIPS["schedule.save"]' in html
+
+
+# ------------------------------------------------------------ canvas layout
+# The widget is the third copy of the same canvas; the same layout brief applies.
+def test_node_creation_is_a_top_bar_not_a_left_rail(html):
+    assert 'id="kit"' in html
+    assert html.index('id="kit"') < html.index('id="canvas"')
+    assert 'id="palette"' not in html and "#palette" not in html
+    kit = html[html.index('id="kit"'):html.index('id="bar"')]
+    assert kit.count('data-kind="') == 5
+    assert kit.count('class="ico"') == 5
+
+
+def test_inspector_starts_collapsed_and_can_be_closed(html):
+    assert '<div id="app" class="collapsed">' in html
+    assert 'id="insp-toggle"' in html and 'aria-expanded="false"' in html
+    assert "#app.collapsed #inspector { width: 30px" in html
+    assert "function setInspector(open)" in html
+    assert "setInspector(true)" in html
+
+
+def test_canvas_fits_its_width_and_recomputes_on_resize(html):
+    assert "function fit()" in html
+    assert 'setAttribute("viewBox"' in html
+    assert "ResizeObserver" in html
+    assert "fitLocked" in html
+
+
+def test_nodes_are_compact_with_a_two_line_preview(html):
+    assert "var NODE_W = 150, NODE_H = 58;" in html
+    assert "function previewLines(n)" in html
+    assert "previewLines(n).forEach" in html
+    assert "lines.length === 2" in html
+    assert "sub.textContent = preview(n)" not in html

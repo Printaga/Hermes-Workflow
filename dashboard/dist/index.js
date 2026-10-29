@@ -1,7 +1,8 @@
 /**
  * Hermes Workflows — dashboard plugin.
  *
- * Designer canvas (palette · SVG graph · inspector) ported from widgets/designer.html, wrapped
+ * Designer canvas (top node bar · SVG graph · collapsible inspector) ported from
+ * widgets/designer.html, wrapped
  * in a React tab so the dashboard can show it at /workflows. Plain IIFE, no build step: React,
  * the hooks and the auth-aware JSON client all come from window.__HERMES_PLUGIN_SDK__.
  *
@@ -223,8 +224,10 @@
     if (f.length === 5 && /^\d+$/.test(f[4])) return WEEKDAYS[parseInt(f[4], 10) % 7][0];
     return "mon";
   }
-  var NODE_W = 168;
-  var NODE_H = 56;
+  // Compact cards: the canvas is often 600px wide inside a dashboard that already has two
+  // sidebars open, so a node is 150x58 and its preview is at most two short lines.
+  var NODE_W = 150;
+  var NODE_H = 58;
   var PORT_R = 5;
 
   // ---- edge geometry (identical in dashboard/dist/index.js, widgets/designer.html and
@@ -262,19 +265,27 @@
   // whole palette from tokens that DO exist, scoped to the shell so the rest of the
   // dashboard is untouched.
   var CSS = [
-    ".vw-shell{--vw-ink:var(--midground,#ffe6cb);--vw-dim:color-mix(in srgb,var(--midground,#ffe6cb) 72%,transparent);--vw-surface:color-mix(in srgb,var(--midground,#ffe6cb) 5%,var(--background,#041c1c));--vw-line:color-mix(in srgb,var(--midground,#ffe6cb) 16%,transparent);--vw-node:color-mix(in srgb,var(--midground,#ffe6cb) 7%,var(--background,#041c1c));--vw-accent:var(--series-output-token,#34d399);--vw-danger:#fb2c36;display:flex;height:100%;min-height:420px;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--vw-ink);text-align:left}",
-    ".vw-rail{flex:0 0 190px;padding:10px 12px;border-right:1px solid var(--vw-line);background:var(--vw-surface);overflow:auto}",
+    ".vw-shell{--vw-ink:var(--midground,#ffe6cb);--vw-dim:color-mix(in srgb,var(--midground,#ffe6cb) 72%,transparent);--vw-surface:color-mix(in srgb,var(--midground,#ffe6cb) 5%,var(--background,#041c1c));--vw-line:color-mix(in srgb,var(--midground,#ffe6cb) 16%,transparent);--vw-node:color-mix(in srgb,var(--midground,#ffe6cb) 7%,var(--background,#041c1c));--vw-accent:var(--series-output-token,#34d399);--vw-danger:#fb2c36;display:flex;flex-direction:column;height:100%;min-height:420px;min-width:0;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--vw-ink);text-align:left}",
     ".vw-rail-title{margin:0 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--vw-dim)}",
     ".vw-list{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}",
-    ".vw-stage{flex:1 1 auto;min-width:0;display:flex}",
-    ".vw-app{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;padding:8px 10px}",
-    ".vw-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:0 0 8px;border-bottom:1px solid var(--vw-line)}",
-    ".vw-bar .vw-grow{flex:1 1 160px;min-width:110px}",
-    ".vw-main{display:flex;flex:1 1 auto;min-height:0}",
-    ".vw-palette{flex:0 0 130px;padding:8px 10px 8px 0;border-right:1px solid var(--vw-line)}",
-    ".vw-palette .vw-pill{display:block;width:100%;margin:0 0 6px;text-align:left}",
-    ".vw-wrap{flex:1 1 auto;min-width:0;overflow:auto;padding:8px}",
-    ".vw-inspector{flex:0 0 250px;padding:8px 0 8px 10px;border-left:1px solid var(--vw-line);overflow:auto}",
+    ".vw-top{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--vw-line);background:var(--vw-surface)}",
+    ".vw-top .vw-grow{flex:1 1 160px;min-width:120px}",
+    ".vw-stage{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}",
+    ".vw-app{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;min-width:0;padding:6px 8px}",
+    ".vw-kit{display:flex;gap:4px;align-items:center;overflow-x:auto;flex:1 1 auto;min-width:0;padding:0 0 6px;border-bottom:1px solid var(--vw-line)}",
+    ".vw-tool{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;white-space:nowrap;cursor:grab}",
+    ".vw-tool .ico{font-size:12px;line-height:1}",
+    ".vw-kit-hint{flex:0 1 auto;margin:0 0 0 auto;padding-left:8px;font-size:11px;color:var(--vw-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+    ".vw-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--vw-line)}",
+    ".vw-bar .vw-grow{flex:1 1 140px;min-width:100px}",
+    ".vw-main{display:flex;flex:1 1 auto;min-width:0;min-height:0}",
+    ".vw-wrap{flex:1 1 auto;min-width:0;overflow:auto;padding:6px}",
+    ".vw-inspector{flex:0 0 auto;width:252px;box-sizing:border-box;padding:4px 0 8px 10px;border-left:1px solid var(--vw-line);overflow:auto}",
+    ".vw-insp-toggle{font:inherit;color:var(--vw-dim);background:none;border:0;padding:2px 4px;cursor:pointer;text-align:left}",
+    ".vw-insp-toggle:hover{color:var(--vw-ink)}",
+    ".vw-app.vw-insp-collapsed .vw-inspector{width:30px;padding:4px 2px;overflow:hidden}",
+    ".vw-app.vw-insp-collapsed .vw-insp-body{display:none}",
+    ".vw-app.vw-insp-collapsed .vw-insp-toggle{writing-mode:vertical-rl;height:100%;font-size:10px;letter-spacing:.08em;text-transform:uppercase}",
     ".vw-errors,.vw-run{margin:0;padding:6px 0;border-top:1px solid var(--vw-line);white-space:pre-wrap;color:var(--vw-dim);max-height:150px;overflow:auto}",
     ".vw-run h4{margin:2px 0 4px;font-size:12px;color:var(--vw-ink)}",
     ".vw-run pre{margin:2px 0 6px;white-space:pre-wrap;max-height:96px;overflow:auto}",
@@ -297,7 +308,7 @@
     ".vw-edge-on{stroke:var(--vw-accent);stroke-width:2.4}",
     ".vw-edge-hit{fill:none;stroke:transparent;stroke-width:12;cursor:pointer}",
     ".vw-ghost{fill:none;stroke:var(--vw-accent);stroke-width:1.6;stroke-dasharray:4 3}",
-    ".vw-views{display:flex;gap:4px;margin:0 0 10px}",
+    ".vw-views{display:flex;gap:4px;margin:0}",
     ".vw-stage-sched{display:block;overflow:auto;padding:8px 10px}",
     ".vw-job{padding:6px 0;border-bottom:1px solid var(--vw-line)}",
     ".vw-job-head{display:flex;gap:4px;align-items:baseline}",
@@ -306,7 +317,15 @@
   ].join("\n");
 
   var TEMPLATE =
-    '<div class="vw-app">' +
+    '<div class="vw-app vw-insp-collapsed">' +
+    '  <div class="vw-kit">' +
+    '    <button class="vw-pill vw-tool" type="button" draggable="true" data-kind="trigger"><span class="ico">\u25b6</span>Trigger</button>' +
+    '    <button class="vw-pill vw-tool" type="button" draggable="true" data-kind="agent"><span class="ico">\u2726</span>Agent</button>' +
+    '    <button class="vw-pill vw-tool" type="button" draggable="true" data-kind="condition"><span class="ico">\u25c7</span>Condition</button>' +
+    '    <button class="vw-pill vw-tool" type="button" draggable="true" data-kind="approval"><span class="ico">\u2713</span>Approval</button>' +
+    '    <button class="vw-pill vw-tool" type="button" draggable="true" data-kind="output"><span class="ico">\u25a4</span>Output</button>' +
+    '    <p class="vw-kit-hint">Click a node to add it, or drag it onto the canvas. Drag a node&rsquo;s right port to another node&rsquo;s left port.</p>' +
+    '  </div>' +
     '  <div class="vw-bar">' +
     '    <input class="vw-grow" data-vw="name" type="text" value="untitled" aria-label="design name">' +
     '    <button class="vw-pill" type="button" data-vw="validate">Validate</button>' +
@@ -317,18 +336,13 @@
     '    <span class="vw-muted" data-vw="status"></span>' +
     '  </div>' +
     '  <div class="vw-main">' +
-    '    <div class="vw-palette">' +
-    '      <button class="vw-pill" type="button" draggable="true" data-kind="trigger">Trigger</button>' +
-    '      <button class="vw-pill" type="button" draggable="true" data-kind="agent">Agent</button>' +
-    '      <button class="vw-pill" type="button" draggable="true" data-kind="condition">Condition</button>' +
-    '      <button class="vw-pill" type="button" draggable="true" data-kind="approval">Approval</button>' +
-    '      <button class="vw-pill" type="button" draggable="true" data-kind="output">Output</button>' +
-    '      <p class="vw-hint">Drag from a node&rsquo;s right port to another node&rsquo;s left port. Click an edge, then Delete, to cut it.</p>' +
-    '    </div>' +
     '    <div class="vw-wrap" data-vw="wrap">' +
-    '      <svg class="vw-canvas" data-vw="canvas" width="900" height="560" role="img" aria-label="workflow canvas"></svg>' +
+    '      <svg class="vw-canvas" data-vw="canvas" role="img" aria-label="workflow canvas"></svg>' +
     '    </div>' +
-    '    <div class="vw-inspector" data-vw="inspector"></div>' +
+    '    <div class="vw-inspector">' +
+    '      <button class="vw-insp-toggle" type="button" data-vw="insp-toggle" aria-expanded="false" aria-controls="vw-insp-body">Inspector</button>' +
+    '      <div class="vw-insp-body" id="vw-insp-body" data-vw="inspector"></div>' +
+    '    </div>' +
     '  </div>' +
     '  <div class="vw-run" data-vw="run"></div>' +
     '  <pre class="vw-errors" data-vw="errors"></pre>' +
@@ -390,6 +404,8 @@
       return host.querySelector(sel);
     };
     var el = {
+      app: q(".vw-app"),
+      toggle: q('[data-vw="insp-toggle"]'),
       name: q('[data-vw="name"]'),
       canvas: q('[data-vw="canvas"]'),
       wrap: q('[data-vw="wrap"]'),
@@ -417,13 +433,14 @@
     function layout() {
       graph.nodes.forEach(function (n, i) {
         if (typeof n.x !== "number" || typeof n.y !== "number") {
-          n.x = 30 + (i % 4) * 196;
-          n.y = 40 + Math.floor(i / 4) * 128;
+          n.x = 26 + (i % 4) * 172;
+          n.y = 28 + Math.floor(i / 4) * 92;
         }
       });
     }
 
-    function preview(n) {
+    /** At most two short lines of a node's own text, cut on a word where there is one. */
+    function previewLines(n) {
       var text =
         n.type === "agent" ? n.prompt || "" :
         n.type === "condition" ? n.expression || "" :
@@ -431,7 +448,69 @@
         n.type === "trigger" ? (n.trigger_mode || "") + (n.schedule ? " " + n.schedule : "") :
         (n.after || []).join(", ");
       text = String(text).replace(/\s+/g, " ").trim();
-      return text.length > 26 ? text.slice(0, 25) + "\u2026" : text;
+      var lines = [];
+      while (text && lines.length < 2) {
+        if (text.length <= 22) {
+          lines.push(text);
+          break;
+        }
+        var cut = text.lastIndexOf(" ", 22);
+        if (cut < 8) cut = 22;
+        lines.push(text.slice(0, cut).trim());
+        text = text.slice(cut).trim();
+      }
+      if (text && lines.length === 2) lines[1] = lines[1].slice(0, 21) + "\u2026";
+      return lines;
+    }
+
+    /** Collapsed to a 30px strip by default; a selection opens it, the toggle closes it. */
+    function setInspector(open) {
+      el.app.classList.toggle("vw-insp-collapsed", !open);
+      el.toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      el.toggle.textContent = open ? "Inspector \u00bb" : "Inspector";
+    }
+
+    /**
+     * Fit the drawing to the wrapper's width, never above 1:1 (so text stays crisp).
+     *
+     * The SVG is a fixed virtual sheet whose viewBox is the graph's bounds; the rendered width
+     * is the wrapper's, so a narrow tab scales the whole graph down instead of clipping it.
+     * Only width is measured: height follows the aspect ratio and the wrapper scrolls.
+     */
+    var fitLocked = false;
+
+    function fit() {
+      var svg = el.canvas;
+      var avail = Math.max(240, (el.wrap.clientWidth || 0) - 12);
+      var maxX = 0;
+      var maxY = 0;
+      graph.nodes.forEach(function (n) {
+        maxX = Math.max(maxX, n.x + NODE_W);
+        maxY = Math.max(maxY, n.y + NODE_H);
+      });
+      var width = Math.max(maxX + 30, 320);
+      var height = Math.max(maxY + 30, 200);
+      var scale = avail / width;
+      if (scale > 1) {
+        width = avail;
+        scale = 1;
+      }
+      svg.setAttribute("viewBox", "0 0 " + Math.round(width) + " " + Math.round(height));
+      svg.setAttribute("width", Math.round(avail));
+      svg.setAttribute("height", Math.round(Math.max(200, height * scale)));
+      svg.setAttribute("preserveAspectRatio", "xMinYMin meet");
+    }
+
+    /** Re-fit when the tab itself is resized (sidebars opening, window drag). */
+    function watchSize() {
+      if (typeof ResizeObserver !== "function") return;
+      var width = el.wrap.clientWidth;
+      new ResizeObserver(function () {
+        if (el.wrap.clientWidth !== width) {
+          width = el.wrap.clientWidth;
+          fit();
+        }
+      }).observe(el.wrap);
     }
 
     function draw() {
@@ -494,15 +573,19 @@
           stroke: isSelected || queued ? "var(--vw-accent)" : "var(--vw-line)",
           "stroke-width": isSelected ? 2 : 1,
         }));
-        var kind = svgEl("text", { x: 10, y: 16, "font-size": 9, fill: "var(--vw-dim)" });
+        var kind = svgEl("text", { x: 9, y: 13, "font-size": 8, fill: "var(--vw-dim)" });
         kind.textContent = String(n.type).toUpperCase();
-        var id = svgEl("text", { x: 10, y: 32, "font-size": 12, fill: "var(--vw-ink)" });
+        var id = svgEl("text", { x: 9, y: 26, "font-size": 11, fill: "var(--vw-ink)" });
         id.textContent = n.id;
-        var sub = svgEl("text", { x: 10, y: 46, "font-size": 10, fill: "var(--vw-dim)" });
-        sub.textContent = preview(n);
         g.appendChild(kind);
         g.appendChild(id);
-        g.appendChild(sub);
+        previewLines(n).forEach(function (text, line) {
+          var row = svgEl("text", {
+            x: 9, y: 38 + line * 11, "font-size": 9, fill: "var(--vw-dim)",
+          });
+          row.textContent = text;
+          g.appendChild(row);
+        });
 
         var out = svgEl("circle", {
           cx: NODE_W, cy: NODE_H / 2, r: PORT_R, "class": "vw-port",
@@ -533,6 +616,7 @@
         wireNode(g, n);
         svg.appendChild(g);
       });
+      if (!fitLocked) fit();
     }
 
     function svgPoint(ev) {
@@ -551,6 +635,7 @@
         // port inside a child <g> must never drag the node).
         if (ev.target && ev.target.getAttribute && ev.target.getAttribute("data-port")) return;
         ev.preventDefault();
+        fitLocked = true;
         var start = svgPoint(ev);
         var offset = { x: start.x - n.x, y: start.y - n.y };
         var moved = false;
@@ -564,7 +649,9 @@
         function onUp() {
           document.removeEventListener("mousemove", onMove);
           document.removeEventListener("mouseup", onUp);
+          fitLocked = false;
           if (!moved) pick(n.id);
+          else draw();
         }
         document.addEventListener("mousemove", onMove);
         document.addEventListener("mouseup", onUp);
@@ -574,6 +661,7 @@
     function pick(id) {
       selected = id;
       selectedEdge = null;
+      setInspector(true);
       // The queue is "the two most recently clicked nodes", parent first. Clicking a node
       // again must not drop it (that would make click-click-Connect impossible).
       linkQueue = linkQueue.filter(function (x) {
@@ -616,6 +704,7 @@
       var origin = outPort(n);
       var moved = false;
       linkArm = null;
+      fitLocked = true;
       dragLink = { from: n.id, x1: origin.x, y1: origin.y, x2: start.x, y2: start.y };
       draw();
       function onMove(moveEv) {
@@ -630,6 +719,7 @@
         document.removeEventListener("mouseup", onUp);
         var from = dragLink.from;
         dragLink = null;
+        fitLocked = false;
         if (moved) {
           var targetId = nodeIdAtPoint(svgPoint(upEv));
           if (targetId && targetId !== from) finishLink(from, targetId);
@@ -1008,6 +1098,7 @@
       box.textContent = "";
       var current = selected ? nodeById(selected) : null;
       if (!current) {
+        setInspector(false);
         var empty = document.createElement("p");
         empty.className = "vw-muted";
         empty.textContent = "Select a node to edit it.";
@@ -1188,13 +1279,14 @@
         fresh.y = Math.max(0, Math.round(y - NODE_H / 2));
       } else {
         var slot = graph.nodes.length;
-        fresh.x = 30 + (slot % 4) * 196;
-        fresh.y = 40 + Math.floor(slot / 4) * 128;
+        fresh.x = 26 + (slot % 4) * 172;
+        fresh.y = 28 + Math.floor(slot / 4) * 92;
       }
       graph.nodes.push(fresh);
       selected = id;
       selectedEdge = null;
       linkQueue = [id];
+      setInspector(true);
       buildInspector();
       draw();
     }
@@ -1444,6 +1536,9 @@
       q('[data-vw="run-now"]').addEventListener("click", runDesign);
       q('[data-vw="connect"]').addEventListener("click", connect);
       q('[data-vw="delete"]').addEventListener("click", removeSelected);
+      el.toggle.addEventListener("click", function () {
+        setInspector(el.app.classList.contains("vw-insp-collapsed"));
+      });
 
       Array.prototype.forEach.call(host.querySelectorAll("[data-kind]"), function (b) {
         var kind = b.getAttribute("data-kind");
@@ -1471,6 +1566,7 @@
     }
 
     wire();
+    watchSize();
     layout();
     el.name.value = graph.name;
     buildInspector();
@@ -1490,6 +1586,7 @@
       el.errors.textContent = "";
       note("");
       el.name.value = graph.name;
+      setInspector(false);
       layout();
       buildInspector();
       draw();
@@ -1847,7 +1944,9 @@
       if (designerRef.current) designerRef.current.newDesign("untitled");
     }
 
-    var rail = [
+    // One compact row instead of a 190px rail: at 760px of tab width every column the rail
+    // took came straight out of the canvas.
+    var top = h("div", { key: "top", className: "vw-top" },
       h("div", { key: "views", className: "vw-views" },
         h("button", {
           key: "designer", type: "button", className: "vw-pill",
@@ -1864,29 +1963,30 @@
           "aria-pressed": view === "schedules" ? "true" : "false",
           onClick: function () { setView("schedules"); },
         }, "Schedules")),
-      h("p", { key: "title", className: "vw-rail-title" }, "Saved workflows"),
-      designs.length
-        ? h("div", { key: "list", className: "vw-list" }, designs.map(function (name) {
-          return h("button", {
-            key: name,
-            type: "button",
-            className: "vw-pill",
-            "aria-pressed": name === active ? "true" : "false",
-            onClick: function () {
-              open(name);
-            },
-          }, name);
-        }))
-        : h("p", { key: "empty", className: "vw-muted" }, "None yet \u2014 build one and Save."),
-      h("button", { key: "new", type: "button", className: "vw-pill", onClick: blank }, "New design"),
-      error ? h("p", { key: "err", className: "vw-error" }, error) : null,
-    ];
+      h("select", {
+        key: "designs",
+        className: "vw-grow",
+        "aria-label": "saved workflows",
+        title: "Open a saved workflow, or keep the draft on the canvas.",
+        value: active,
+        onChange: function (ev) {
+          if (ev.target.value) open(ev.target.value);
+        },
+      },
+        h("option", { key: "none", value: "" },
+          designs.length ? "\u2014 saved workflows \u2014" : "no saved workflows yet"),
+        designs.map(function (name) {
+          return h("option", { key: name, value: name }, name);
+        })),
+      h("button", { key: "new", type: "button", className: "vw-pill", onClick: blank }, "New"),
+      error ? h("p", { key: "err", className: "vw-error" }, error) : null
+    );
 
     return h(
       "div",
       { className: "vw-shell" },
       h("style", null, CSS),
-      h("div", { className: "vw-rail" }, rail),
+      top,
       view === "schedules"
         ? h("div", { className: "vw-stage vw-stage-sched" }, h(SchedulesPanel, { designs: designs }))
         : view === "runs"

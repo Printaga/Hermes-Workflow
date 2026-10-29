@@ -17,15 +17,35 @@
     padding: 8px 0; border-bottom: 1px solid var(--border, #3a3a3a);
   }
   #bar .grow { flex: 1 1 180px; min-width: 120px; }
-  #main { display: flex; flex: 1 1 auto; min-height: 0; }
-  #palette {
-    width: 150px; flex: 0 0 150px; padding: 8px 10px 8px 0;
-    border-right: 1px solid var(--border, #3a3a3a);
+  #main { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; }
+  #kit {
+    display: flex; gap: 4px; align-items: center; overflow-x: auto;
+    padding: 6px 0; border-bottom: 1px solid var(--border, #3a3a3a);
   }
-  #canvaswrap { flex: 1 1 auto; overflow: auto; padding: 8px; }
+  #kit .tool {
+    display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto;
+    white-space: nowrap; cursor: grab;
+  }
+  #kit .ico { font-size: 12px; line-height: 1; }
+  #kit .hint {
+    margin: 0 0 0 auto; padding-left: 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #canvaswrap { flex: 1 1 auto; min-width: 0; overflow: auto; padding: 6px; }
   #inspector {
-    width: 258px; flex: 0 0 258px; padding: 8px 0 8px 10px;
+    width: 252px; flex: 0 0 auto; box-sizing: border-box; padding: 4px 0 8px 10px;
     border-left: 1px solid var(--border, #3a3a3a); overflow: auto;
+  }
+  #insp-toggle {
+    font: inherit; color: var(--muted-foreground, #9a9a9a); background: none;
+    border: 0; padding: 2px 4px; cursor: pointer; text-align: left;
+  }
+  #insp-toggle:hover { color: var(--foreground, #d8d8d8); }
+  #app.collapsed #inspector { width: 30px; padding: 4px 2px; overflow: hidden; }
+  #app.collapsed #insp-body { display: none; }
+  #app.collapsed #insp-toggle {
+    writing-mode: vertical-rl; height: 100%; font-size: 10px;
+    letter-spacing: .08em; text-transform: uppercase;
   }
   #errors {
     margin: 0; padding: 6px 0; max-height: 108px; overflow: auto;
@@ -39,7 +59,6 @@
   }
   button.pill { cursor: pointer; }
   button.pill:hover { border-color: var(--accent, #6ea8fe); }
-  #palette button.pill { display: block; width: 100%; margin: 0 0 6px; text-align: left; }
   input[type=text], textarea, select { width: 100%; box-sizing: border-box; }
   textarea { resize: vertical; }
   .muted { color: var(--muted-foreground, #9a9a9a); }
@@ -62,7 +81,16 @@
 </style>
 </head>
 <body>
-<div id="app">
+<div id="app" class="collapsed">
+  <div id="kit">
+    <!-- click adds at a free slot, drag drops at the pointer -->
+    <button class="pill tool" type="button" draggable="true" data-kind="trigger"><span class="ico">▶</span>Trigger</button>
+    <button class="pill tool" type="button" draggable="true" data-kind="agent"><span class="ico">✦</span>Agent</button>
+    <button class="pill tool" type="button" draggable="true" data-kind="condition"><span class="ico">◇</span>Condition</button>
+    <button class="pill tool" type="button" draggable="true" data-kind="approval"><span class="ico">✓</span>Approval</button>
+    <button class="pill tool" type="button" draggable="true" data-kind="output"><span class="ico">▤</span>Output</button>
+    <p class="hint">Click a node to add it, or drag it onto the canvas. Drag a node&rsquo;s right port to another node&rsquo;s left port.</p>
+  </div>
   <div id="bar">
     <input id="name" class="grow" type="text" value="hello-world" aria-label="design name">
     <button class="pill" id="validate" type="button">Validate</button>
@@ -72,19 +100,13 @@
     <button class="pill" id="save" type="button" data-hermes-send="workflow save">Save to Hermes</button>
   </div>
   <div id="main">
-    <div id="palette">
-      <!-- click adds at a free slot, drag drops at the pointer -->
-      <button class="pill" type="button" draggable="true" data-kind="trigger">Trigger</button>
-      <button class="pill" type="button" draggable="true" data-kind="agent">Agent</button>
-      <button class="pill" type="button" draggable="true" data-kind="condition">Condition</button>
-      <button class="pill" type="button" draggable="true" data-kind="approval">Approval</button>
-      <button class="pill" type="button" draggable="true" data-kind="output">Output</button>
-      <p class="hint">Drag from a node&rsquo;s right port to another node&rsquo;s left port.<br>Click an edge, then Delete, to cut it.</p>
-    </div>
     <div id="canvaswrap">
-      <svg id="canvas" width="900" height="560" role="img" aria-label="workflow canvas"></svg>
+      <svg id="canvas" role="img" aria-label="workflow canvas"></svg>
     </div>
-    <div id="inspector"></div>
+    <div id="inspector">
+      <button id="insp-toggle" type="button" aria-expanded="false" aria-controls="insp-body">Inspector</button>
+      <div id="insp-body"></div>
+    </div>
   </div>
   <pre id="errors"></pre>
 </div>
@@ -272,7 +294,9 @@
     return "mon";
   }
   var MAX_NODES = 50;
-  var NODE_W = 168, NODE_H = 56;
+  // Compact cards: the preview is often hosted in a narrow pane, so a node is 150x58 and
+  // its text preview is at most two short lines.
+  var NODE_W = 150, NODE_H = 58;
   var PORT_R = 5;
 
   // ---- edge geometry (identical in widgets/designer.html, dashboard/dist/index.js and
@@ -310,8 +334,8 @@
   function layout() {
     graph.nodes.forEach(function (n, i) {
       if (typeof n.x !== "number" || typeof n.y !== "number") {
-        n.x = 30 + (i % 4) * 196;
-        n.y = 40 + Math.floor(i / 4) * 128;
+        n.x = 26 + (i % 4) * 172;
+        n.y = 28 + Math.floor(i / 4) * 92;
       }
     });
   }
@@ -423,7 +447,8 @@
     return el;
   }
 
-  function preview(n) {
+  /** At most two short lines of a node's own text, cut on a word where there is one. */
+  function previewLines(n) {
     var text =
       n.type === "agent" ? (n.prompt || "") :
       n.type === "condition" ? (n.expression || "") :
@@ -431,7 +456,63 @@
       n.type === "trigger" ? (n.trigger_mode || "") + (n.schedule ? " " + n.schedule : "") :
       (n.after || []).join(", ");
     text = String(text).replace(/\s+/g, " ").trim();
-    return text.length > 26 ? text.slice(0, 25) + "…" : text;
+    var lines = [];
+    while (text && lines.length < 2) {
+      if (text.length <= 22) { lines.push(text); break; }
+      var cut = text.lastIndexOf(" ", 22);
+      if (cut < 8) { cut = 22; }
+      lines.push(text.slice(0, cut).trim());
+      text = text.slice(cut).trim();
+    }
+    if (text && lines.length === 2) { lines[1] = lines[1].slice(0, 21) + "…"; }
+    return lines;
+  }
+
+  // ------------------------------------------------------- inspector panel
+  // Collapsed to a 30px strip by default; a selection opens it, the toggle closes it.
+  function setInspector(open) {
+    document.getElementById("app").classList.toggle("collapsed", !open);
+    var toggle = document.getElementById("insp-toggle");
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    toggle.textContent = open ? "Inspector »" : "Inspector";
+  }
+
+  // ------------------------------------------------------------- fit width
+  // The SVG is a fixed virtual sheet whose viewBox is the graph's bounds; the rendered width
+  // is the wrapper's, so a narrow pane scales the graph down instead of clipping it. Only
+  // width is measured: height follows the aspect ratio and the wrapper scrolls.
+  var fitLocked = false;
+
+  function fit() {
+    var svg = document.getElementById("canvas");
+    var wrap = document.getElementById("canvaswrap");
+    var avail = Math.max(240, (wrap.clientWidth || 0) - 12);
+    var maxX = 0, maxY = 0;
+    graph.nodes.forEach(function (n) {
+      maxX = Math.max(maxX, n.x + NODE_W);
+      maxY = Math.max(maxY, n.y + NODE_H);
+    });
+    var width = Math.max(maxX + 30, 320);
+    var height = Math.max(maxY + 30, 200);
+    var scale = avail / width;
+    if (scale > 1) { width = avail; scale = 1; }
+    svg.setAttribute("viewBox", "0 0 " + Math.round(width) + " " + Math.round(height));
+    svg.setAttribute("width", Math.round(avail));
+    svg.setAttribute("height", Math.round(Math.max(200, height * scale)));
+    svg.setAttribute("preserveAspectRatio", "xMinYMin meet");
+  }
+
+  /** Re-fit when the pane itself is resized (Hermes sidebars opening, window drag). */
+  function watchSize() {
+    if (typeof ResizeObserver !== "function") { return; }
+    var wrap = document.getElementById("canvaswrap");
+    var width = wrap.clientWidth;
+    new ResizeObserver(function () {
+      if (wrap.clientWidth !== width) {
+        width = wrap.clientWidth;
+        fit();
+      }
+    }).observe(wrap);
   }
 
   function draw() {
@@ -490,13 +571,18 @@
         stroke: (isSelected || queued) ? "var(--accent)" : "var(--border)",
         "stroke-width": isSelected ? 2 : 1
       }));
-      var kind = svgEl("text", { x: 10, y: 16, "font-size": 9, fill: "var(--muted-foreground)" });
+      var kind = svgEl("text", { x: 9, y: 13, "font-size": 8, fill: "var(--muted-foreground)" });
       kind.textContent = String(n.type).toUpperCase();
-      var id = svgEl("text", { x: 10, y: 32, "font-size": 12, fill: "var(--foreground)" });
+      var id = svgEl("text", { x: 9, y: 26, "font-size": 11, fill: "var(--foreground)" });
       id.textContent = n.id;
-      var sub = svgEl("text", { x: 10, y: 46, "font-size": 10, fill: "var(--muted-foreground)" });
-      sub.textContent = preview(n);
-      g.appendChild(kind); g.appendChild(id); g.appendChild(sub);
+      g.appendChild(kind); g.appendChild(id);
+      previewLines(n).forEach(function (text, line) {
+        var row = svgEl("text", {
+          x: 9, y: 38 + line * 11, "font-size": 9, fill: "var(--muted-foreground)"
+        });
+        row.textContent = text;
+        g.appendChild(row);
+      });
 
       var out = svgEl("circle", {
         cx: NODE_W, cy: NODE_H / 2, r: PORT_R, "class": "port"
@@ -529,6 +615,7 @@
       wireNode(g, n);
       svg.appendChild(g);
     });
+    if (!fitLocked) { fit(); }
   }
 
   function svgPoint(ev) {
@@ -546,6 +633,7 @@
       // inside a child <g> must never drag the node).
       if (ev.target && ev.target.getAttribute && ev.target.getAttribute("data-port")) { return; }
       ev.preventDefault();
+      fitLocked = true;
       var start = svgPoint(ev);
       var offset = { x: start.x - n.x, y: start.y - n.y };
       var moved = false;
@@ -559,7 +647,8 @@
       function onUp() {
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
-        if (!moved) { pick(n.id); }
+        fitLocked = false;
+        if (!moved) { pick(n.id); } else { draw(); }
       }
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
@@ -570,6 +659,7 @@
   function pick(id) {
     selected = id;
     selectedEdge = null;
+    setInspector(true);
     // The queue is "the two most recently clicked nodes", parent first. Clicking a node
     // again must not drop it (that would make click-click-Connect impossible).
     linkQueue = linkQueue.filter(function (x) { return x !== id; }).concat([id]).slice(-2);
@@ -607,6 +697,7 @@
   function beginLink(n, ev) {
     var start = svgPoint(ev), origin = outPort(n), moved = false;
     linkArm = null;
+    fitLocked = true;
     dragLink = { from: n.id, x1: origin.x, y1: origin.y, x2: start.x, y2: start.y };
     draw();
     function onMove(moveEv) {
@@ -621,6 +712,7 @@
       document.removeEventListener("mouseup", onUp);
       var from = dragLink.from;
       dragLink = null;
+      fitLocked = false;
       if (moved) {
         var targetId = nodeIdAtPoint(svgPoint(upEv));
         if (targetId && targetId !== from) { finishLink(from, targetId); }
@@ -875,10 +967,11 @@
   }
 
   function buildInspector() {
-    var box = document.getElementById("inspector");
+    var box = document.getElementById("insp-body");
     box.textContent = "";
     var current = selected ? node(selected) : null;
     if (!current) {
+      setInspector(false);
       var empty = document.createElement("p");
       empty.className = "muted";
       empty.textContent = "Select a node to edit it.";
@@ -1042,13 +1135,14 @@
       fresh.y = Math.max(0, Math.round(y - NODE_H / 2));
     } else {
       var slot = graph.nodes.length;
-      fresh.x = 30 + (slot % 4) * 196;
-      fresh.y = 40 + Math.floor(slot / 4) * 128;
+      fresh.x = 26 + (slot % 4) * 172;
+      fresh.y = 28 + Math.floor(slot / 4) * 92;
     }
     graph.nodes.push(fresh);
     selected = id;
     selectedEdge = null;
     linkQueue = [id];
+    setInspector(true);
     buildInspector();
     draw();
   }
@@ -1106,6 +1200,7 @@
     selectedEdge = null;
     linkQueue = [];
     linkArm = null;
+    setInspector(false);
     document.getElementById("name").value = graph.name;
     buildInspector();
     draw();
@@ -1141,8 +1236,12 @@
     document.getElementById("connect").addEventListener("click", connect);
     document.getElementById("save").addEventListener("click", saveToHermes);
 
+    document.getElementById("insp-toggle").addEventListener("click", function () {
+      setInspector(document.getElementById("app").classList.contains("collapsed"));
+    });
+
     Array.prototype.forEach.call(
-      document.querySelectorAll("#palette [data-kind]"),
+      document.querySelectorAll("#kit [data-kind]"),
       function (button) {
         var kind = button.getAttribute("data-kind");
         button.title = TIPS[kind] || kind;
@@ -1178,6 +1277,7 @@
   }
 
   wire();
+  watchSize();
   layout();
   buildInspector();
   draw();

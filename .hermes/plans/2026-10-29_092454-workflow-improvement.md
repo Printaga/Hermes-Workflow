@@ -109,3 +109,30 @@ Rules for every task below:
    session, so verify a route by importing the deployed `dashboard/plugin_api.py` by path and
    calling the handler against the real `$HERMES_HOME` store — that is the same code the
    session-protected route runs.
+
+There is **not one deployed copy but one per environment**: `installs/*/workspace/plugin-sources/`
+held seven trees here, most of them behind `main` while `update` claimed up-to-date. Only the
+active env's tree serves the tab. So the check is always (a) disable+enable, (b) `git -C
+~/.hermes/plugins/visual-workflow pull --ff-only` if the clone is behind, (c) grep the feature
+marker in **that env's** `plugin-sources/` copy — never in the repo, never in the clone alone.
+
+## Canvas layout (2026-10-29, user brief, landed)
+
+The dashboard tab at a 1280px viewport with both Hermes sidebars open is ~760px wide; a 130px
+node rail plus a 250px inspector left the canvas unusable. All three canvases now share one
+layout, and every surface is asserted structurally in its test file:
+
+- **Node creation is a top bar** — five compact icon+label buttons in a horizontally scrolling
+  row, replacing the left rail entirely. The dashboard/desktop shells also lost their 190px
+  navigation rail: views are buttons in one top row and saved workflows are a `<select>` there.
+- **The inspector is a collapsible strip** — 30px collapsed (the default), 252px when a node is
+  selected, its own toggle closes it and gives the width back to the canvas.
+- **Nodes are compact** — 150x58 with a two-line, word-cut preview; ports keep r=5 and the
+  port-to-port drag is untouched.
+- **Fit-width, no zoom** — the SVG's viewBox is the graph's bounds and its rendered width is the
+  wrapper's (1:1 cap so text stays crisp), re-fitted through a `ResizeObserver`; scrolling is
+  vertical only. A drag locks the fit so the sheet does not rescale under the pointer.
+
+Measured in headless Chrome at a 760px viewport (`--dump-dom` probe, widget copy of the same
+canvas): canvas 730px collapsed / inspector 30px; canvas 496px with the inspector open /
+252px; node bar 36-40px tall. At 1280px with no sidebars the canvas has the full tab width.
