@@ -104,6 +104,180 @@
   var SVG_NS = "http://www.w3.org/2000/svg";
   var KINDS = ["trigger", "agent", "condition", "approval", "output"];
   var MODES = ["manual", "schedule", "webhook"];
+
+  // ---- tooltips -------------------------------------------------------------
+  // One table, one wording, all three surfaces (dashboard/dist/index.js, desktop/plugin.js,
+  // widgets/designer.html). A native `title` is the smallest mechanism that works in a hosted
+  // page, inside SVG and in a standalone file alike; tests/test_tooltips.py asserts every node
+  // kind and every inspector option has a real sentence here.
+  var TIPS = {
+    trigger: "Starts the run: by hand, on a Hermes schedule, or from a webhook once Phase 2 lands.",
+    agent: "Asks a bot to do one step and waits for its reply.",
+    condition: "Compares a field from an earlier step and skips the branch when the test fails.",
+    approval: "Pauses the run and asks a person to choose or type an answer.",
+    output: "Collects the results, and can send them to one of your chats.",
+    "trigger.trigger_mode": "How the run starts: manual (you press Run), schedule (Hermes cron), or webhook (declared only for now).",
+    "trigger.preset": "Pick a schedule in plain words: every day, Monday to Friday, once a week, every hour, or advanced cron.",
+    "trigger.time": "Local time of day for the schedule, 24-hour HH:MM (e.g. 09:30).",
+    "trigger.weekday": "Day of the week a weekly schedule runs on.",
+    "trigger.schedule": "The cron expression actually saved: minute hour day-of-month month weekday — 0 9 * * 1-5 is 09:00 Monday to Friday.",
+    "trigger.webhook_path": "URL path an outside service will POST to — Phase 2: declared only, nothing listens yet.",
+    "agent.prompt": "What this step should do; the reply becomes out.<node>.text for later steps.",
+    "agent.profile": "Which bot runs the step; host default uses the bot you have active.",
+    "agent.model": "Model override for this step only; empty keeps the bot's own model.",
+    "agent.provider": "Provider override for this step only; empty keeps the bot's own provider.",
+    "condition.expression": "A test like out.draft.word_count > 20 — start with out.<node>.<field>, then one of > >= < <= == !=.",
+    "approval.question": "The question the person sees; the run waits here until they answer.",
+    "approval.options": "Answers offered as buttons, comma separated (e.g. ship, edit); empty means free text.",
+    "output.parents": "Steps whose results this output collects — connect an edge instead of typing here.",
+    "output.deliver": "What to do with the results: collect only, notification to your home channel, or one specific chat.",
+    "output.target": "Where to send it: platform:chat id like telegram:8522302999, or just the platform for its home channel.",
+    "output.target.custom": "Type platform:chat id yourself when the chat list is unavailable.",
+    "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
+    "bar.name": "Name this workflow is saved and run under.",
+    "bar.validate": "Check the graph without saving it.",
+    "bar.save": "Validate and store the workflow.",
+    "bar.run": "Run it now: advance until it finishes or pauses at a gate.",
+    "bar.connect": "Connect the two most recently clicked nodes (parent first).",
+    "bar.delete": "Delete the selected node, or cut the selected edge.",
+    "presets.daily": "Runs once every day at the time you pick.",
+    "presets.weekdays": "Runs Monday to Friday at the time you pick.",
+    "presets.weekly": "Runs once a week on the day and time you pick.",
+    "presets.hourly": "Runs every hour at the minute you pick.",
+    "presets.custom": "Type a cron expression yourself; it is checked as you type.",
+    "schedules.pause": "Stop the schedule from firing; the saved workflow is untouched.",
+    "schedules.resume": "Let the schedule fire again.",
+    "schedules.run": "Run the workflow once now, without waiting for the next time.",
+    "schedules.remove": "Delete the cron job; the saved workflow stays.",
+    "schedules.create": "Create or update the Hermes cron job for the chosen workflow.",
+  };
+
+  // ---- friendly scheduler helpers (mirror visual_workflow_hermes/schedule.py) ----
+  var PRESETS = ["daily", "weekdays", "weekly", "hourly", "custom"];
+  var PRESET_LABELS = {
+    daily: "Every day",
+    weekdays: "Monday to Friday",
+    weekly: "Once a week",
+    hourly: "Every hour",
+    custom: "Advanced (cron)"
+  };
+  var WEEKDAYS = [
+    ["mon", "Monday"], ["tue", "Tuesday"], ["wed", "Wednesday"], ["thu", "Thursday"],
+    ["fri", "Friday"], ["sat", "Saturday"], ["sun", "Sunday"]
+  ];
+  var DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  var CRON_FIELDS = [
+    ["minute", 0, 59], ["hour", 0, 23], ["day-of-month", 1, 31], ["month", 1, 12],
+    ["day-of-week", 0, 7]
+  ];
+
+  function pad2(value) { return (value < 10 ? "0" : "") + value; }
+
+  /** "09:30" -> [9, 30]; null when it is not a 24h HH:MM. */
+  function timeParts(value) {
+    var m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(value || "").trim());
+    return m ? [parseInt(m[1], 10), parseInt(m[2], 10)] : null;
+  }
+
+  function weekdayIndex(name) {
+    var key = String(name || "").slice(0, 3).toLowerCase();
+    var i = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"].indexOf(key);
+    return i < 0 ? 1 : i;
+  }
+
+  /** Preset picker values -> the cron expression that gets saved. */
+  function buildCron(preset, time, weekday, custom) {
+    if (preset === "custom") { return String(custom || "").trim(); }
+    var parts = timeParts(time);
+    if (!parts) { return ""; }
+    if (preset === "hourly") { return parts[1] + " * * * *"; }
+    if (preset === "daily") { return parts[1] + " " + parts[0] + " * * *"; }
+    if (preset === "weekdays") { return parts[1] + " " + parts[0] + " * * 1-5"; }
+    return parts[1] + " " + parts[0] + " * * " + weekdayIndex(weekday);
+  }
+
+  function cronFieldOk(raw, low, high) {
+    var parts = String(raw).split(",");
+    for (var i = 0; i < parts.length; i += 1) {
+      var part = parts[i].trim();
+      if (!part) { return false; }
+      if (part.indexOf("/") >= 0) {
+        var step = part.split("/");
+        part = step[0];
+        if (!/^\d+$/.test(step[1] || "") || parseInt(step[1], 10) < 1) { return false; }
+      }
+      if (part === "*") { continue; }
+      if (part.indexOf("-") >= 0) {
+        var span = part.split("-");
+        if (!/^\d+$/.test(span[0] || "") || !/^\d+$/.test(span[1] || "")) { return false; }
+        if (parseInt(span[0], 10) > parseInt(span[1], 10)) { return false; }
+        if (parseInt(span[0], 10) < low || parseInt(span[1], 10) > high) { return false; }
+        continue;
+      }
+      if (!/^\d+$/.test(part)) { return false; }
+      if (parseInt(part, 10) < low || parseInt(part, 10) > high) { return false; }
+    }
+    return true;
+  }
+
+  /** "" when the expression is a usable 5-field cron, else one line saying why not. */
+  function cronProblem(expression) {
+    var text = String(expression || "").trim();
+    if (!text) { return "enter a cron expression (5 fields, e.g. 0 9 * * 1-5)"; }
+    var fields = text.split(/\s+/);
+    if (fields.length !== 5) {
+      return "cron needs 5 fields (minute hour day month weekday), got " + fields.length;
+    }
+    for (var i = 0; i < CRON_FIELDS.length; i += 1) {
+      var spec = CRON_FIELDS[i];
+      if (!cronFieldOk(fields[i], spec[1], spec[2])) {
+        return spec[0] + " field " + fields[i] + " is not valid (allowed " + spec[1] + "-" +
+          spec[2] + ", *, */n, a-b)";
+      }
+    }
+    return "";
+  }
+
+  /** Plain words for a cron expression, so the inspector reads without decoding cron. */
+  function describeCron(expression) {
+    var text = String(expression || "").trim();
+    if (cronProblem(text)) { return text; }
+    var f = text.split(/\s+/);
+    if (f[2] !== "*" || f[3] !== "*") { return "custom schedule"; }
+    if (f[1] === "*") { return "every hour at :" + pad2(parseInt(f[0], 10)); }
+    if (!/^\d+$/.test(f[0]) || !/^\d+$/.test(f[1])) { return "custom schedule"; }
+    var at = pad2(parseInt(f[1], 10)) + ":" + pad2(parseInt(f[0], 10));
+    if (f[4] === "*") { return "every day at " + at; }
+    if (f[4] === "1-5") { return "Monday to Friday at " + at; }
+    var name = /^\d+$/.test(f[4]) ? DAY_NAMES[parseInt(f[4], 10) % 7] : "";
+    return name ? "every " + name + " at " + at : "custom schedule";
+  }
+
+  /** The preset a saved cron expression reads as; "custom" when it fits none. */
+  function presetOf(expression) {
+    var text = String(expression || "").trim();
+    if (cronProblem(text)) { return "custom"; }
+    var f = text.split(/\s+/);
+    if (f[2] !== "*" || f[3] !== "*") { return "custom"; }
+    if (f[1] === "*") { return "hourly"; }
+    if (f[4] === "1-5") { return "weekdays"; }
+    if (f[4] === "*") { return "daily"; }
+    return "weekly";
+  }
+
+  function timeOf(expression) {
+    var f = String(expression || "").trim().split(/\s+/);
+    if (f.length === 5 && /^\d+$/.test(f[0]) && /^\d+$/.test(f[1])) {
+      return pad2(parseInt(f[1], 10)) + ":" + pad2(parseInt(f[0], 10));
+    }
+    return "09:00";
+  }
+
+  function weekdayOf(expression) {
+    var f = String(expression || "").trim().split(/\s+/);
+    if (f.length === 5 && /^\d+$/.test(f[4])) { return WEEKDAYS[parseInt(f[4], 10) % 7][0]; }
+    return "mon";
+  }
   var MAX_NODES = 50;
   var NODE_W = 168, NODE_H = 56;
   var PORT_R = 5;
@@ -313,6 +487,10 @@
       var queued = linkQueue.indexOf(n.id) >= 0;
       var g = svgEl("g", { transform: "translate(" + n.x + "," + n.y + ")", "class": "node" });
       g.setAttribute("data-id", n.id);
+      // SVG tooltips are a child <title>, not a title attribute.
+      var tip = svgEl("title", {});
+      tip.textContent = n.id + " · " + (TIPS[n.type] || n.type);
+      g.appendChild(tip);
       g.appendChild(svgEl("rect", {
         width: NODE_W, height: NODE_H, rx: 6,
         fill: "var(--card)",
@@ -529,11 +707,17 @@
   }
 
   // ------------------------------------------------------------- inspector
-  function field(labelText, control) {
+  /** A labelled inspector row. The tip rides on the label AND the control, so hovering
+   *  either one explains it (a native title is the whole mechanism, here and in SVG). */
+  function field(labelText, control, tip) {
     var wrap = document.createElement("div");
     var label = document.createElement("div");
     label.className = "label";
     label.textContent = labelText;
+    if (tip) {
+      label.title = tip;
+      control.title = tip;
+    }
     wrap.appendChild(label);
     wrap.appendChild(control);
     return wrap;
@@ -611,6 +795,81 @@
       .catch(function () { profiles = []; });
   }
 
+  /** The friendly scheduler: a preset picker, the time or day it needs, and the cron it
+   *  produces. The node's own `schedule` string stays the only thing that is stored. */
+  function scheduleFields(node) {
+    var wrap = document.createElement("div");
+    var preset = presetOf(node.schedule);
+    var reading = document.createElement("p");
+
+    var picker = document.createElement("select");
+    PRESETS.forEach(function (name) {
+      var option = document.createElement("option");
+      option.value = name;
+      option.textContent = PRESET_LABELS[name];
+      option.title = TIPS["presets." + name];
+      if (name === preset) { option.selected = true; }
+      picker.appendChild(option);
+    });
+    picker.addEventListener("change", function () {
+      if (picker.value !== "custom") {
+        node.schedule = buildCron(picker.value, timeOf(node.schedule), weekdayOf(node.schedule));
+      }
+      buildInspector();
+      draw();
+    });
+    wrap.appendChild(field("runs", picker, TIPS["trigger.preset"]));
+
+    if (preset === "weekly") {
+      var day = document.createElement("select");
+      WEEKDAYS.forEach(function (pair) {
+        var option = document.createElement("option");
+        option.value = pair[0];
+        option.textContent = pair[1];
+        option.title = TIPS["trigger.weekday"];
+        if (pair[0] === weekdayOf(node.schedule)) { option.selected = true; }
+        day.appendChild(option);
+      });
+      day.addEventListener("change", function () {
+        node.schedule = buildCron(preset, timeOf(node.schedule), day.value);
+        buildInspector();
+        draw();
+      });
+      wrap.appendChild(field("day", day, TIPS["trigger.weekday"]));
+    }
+
+    if (preset !== "hourly" && preset !== "custom") {
+      var time = textInput(timeOf(node.schedule), function (v) {
+        if (!timeParts(v)) {
+          reading.className = "error";
+          reading.textContent = "time must be HH:MM (24h), e.g. 09:30";
+          return;
+        }
+        node.schedule = buildCron(preset, v, weekdayOf(node.schedule));
+        draw();
+        reading.className = "hint";
+        reading.textContent = describeCron(node.schedule);
+      }, "09:00");
+      wrap.appendChild(field("time (24h)", time, TIPS["trigger.time"]));
+    }
+
+    var cron = textInput(node.schedule || "", function (v) {
+      node.schedule = v;
+      draw();
+      var problem = cronProblem(v);
+      reading.className = problem ? "error" : "hint";
+      reading.textContent = problem || describeCron(v);
+    }, "0 9 * * 1-5");
+    wrap.appendChild(field("cron (advanced)", cron, TIPS["trigger.schedule"]));
+
+    var problem = cronProblem(node.schedule);
+    reading.className = problem ? "error" : "hint";
+    reading.textContent = problem || describeCron(node.schedule);
+    reading.title = TIPS["trigger.schedule"];
+    wrap.appendChild(reading);
+    return wrap;
+  }
+
   function buildInspector() {
     var box = document.getElementById("inspector");
     box.textContent = "";
@@ -629,29 +888,32 @@
 
     if (current.type === "trigger") {
       var select = document.createElement("select");
+      select.title = TIPS["trigger.trigger_mode"];
       MODES.forEach(function (mode) {
         var option = document.createElement("option");
         option.value = mode;
         option.textContent = mode;
+        option.title = TIPS["trigger.trigger_mode"];
         if (current.trigger_mode === mode) { option.selected = true; }
         select.appendChild(option);
       });
       select.addEventListener("change", function () {
         current.trigger_mode = select.value;
+        buildInspector();
         draw();
       });
-      box.appendChild(field("trigger_mode", select));
-      box.appendChild(field("schedule (cron)", textInput(current.schedule || "", function (v) {
-        current.schedule = v; draw();
-      }, "0 9 * * 1-5")));
-      box.appendChild(field("webhook_path", textInput(current.webhook_path || "", function (v) {
-        current.webhook_path = v; draw();
-      }, "/hooks/my-workflow")));
+      box.appendChild(field("trigger_mode", select, TIPS["trigger.trigger_mode"]));
+      if (current.trigger_mode === "schedule") { box.appendChild(scheduleFields(current)); }
+      if (current.trigger_mode === "webhook") {
+        box.appendChild(field("webhook_path", textInput(current.webhook_path || "", function (v) {
+          current.webhook_path = v; draw();
+        }, "/hooks/my-workflow"), TIPS["trigger.webhook_path"]));
+      }
     } else if (current.type === "agent") {
       box.appendChild(field("prompt", textArea(current.prompt || "", function (v) {
         current.prompt = v; draw();
-      }, 5)));
-      box.appendChild(field("profile / bot (optional)", profileControl(current)));
+      }, 5), TIPS["agent.prompt"]));
+      box.appendChild(field("profile / bot (optional)", profileControl(current), TIPS["agent.profile"]));
       var chosen = profileByName(current.profile);
       if (chosen) {
         var runs = document.createElement("p");
@@ -663,14 +925,14 @@
       }
       box.appendChild(field("model (optional)", textInput(current.model || "", function (v) {
         current.model = v;
-      })));
+      }), TIPS["agent.model"]));
       box.appendChild(field("provider (optional)", textInput(current.provider || "", function (v) {
         current.provider = v;
-      })));
+      }), TIPS["agent.provider"]));
     } else if (current.type === "condition") {
       box.appendChild(field("expression", textInput(current.expression || "", function (v) {
         current.expression = v; draw();
-      }, "out.draft.word_count > 20")));
+      }, "out.draft.word_count > 20"), TIPS["condition.expression"]));
       var hint = document.createElement("p");
       hint.className = "hint";
       hint.textContent = "Must start with out.<node>.<field> <op> <value>.";
@@ -678,28 +940,30 @@
     } else if (current.type === "approval") {
       box.appendChild(field("question", textArea(current.question || "", function (v) {
         current.question = v; draw();
-      }, 3)));
+      }, 3), TIPS["approval.question"]));
       box.appendChild(field("options (comma separated)", textInput(
         (current.options || []).join(", "),
         function (v) {
           var list = v.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
           if (list.length) { current.options = list; } else { delete current.options; }
           draw();
-        }, "ship, edit")));
+        }, "ship, edit"), TIPS["approval.options"]));
     } else if (current.type === "output") {
       var parents = document.createElement("p");
       parents.className = "muted";
       parents.textContent = (current.after || []).length
         ? (current.after || []).join(", ")
         : "(no parents — this output collects nothing)";
-      box.appendChild(field("parents", parents));
+      box.appendChild(field("parents", parents, TIPS["output.parents"]));
       var deliver = document.createElement("select");
+      deliver.title = TIPS["output.deliver"];
       [["", "collect only (no delivery)"],
        ["notification", "notification — my home channel"],
        ["channel", "channel — a specific chat"]].forEach(function (pair) {
         var option = document.createElement("option");
         option.value = pair[0];
         option.textContent = pair[1];
+        option.title = TIPS["output.deliver"];
         if ((current.deliver || "") === pair[0]) { option.selected = true; }
         deliver.appendChild(option);
       });
@@ -708,11 +972,11 @@
         buildInspector();
         draw();
       });
-      box.appendChild(field("deliver", deliver));
+      box.appendChild(field("deliver", deliver, TIPS["output.deliver"]));
       if (current.deliver === "channel") {
         box.appendChild(field("target", textInput(current.target || "", function (v) {
           current.target = v; draw();
-        }, "telegram:123456789")));
+        }, "telegram:8522302999"), TIPS["output.target.custom"]));
         var targetHint = document.createElement("p");
         targetHint.className = "hint";
         targetHint.textContent = "<platform>:<chat id>. Leave empty to use the platform's home channel.";
@@ -844,6 +1108,12 @@
       });
     });
 
+    document.getElementById("name").title = TIPS["bar.name"];
+    document.getElementById("validate").title = TIPS["bar.validate"];
+    document.getElementById("copy").title = "Copy this graph's designer JSON to the clipboard.";
+    document.getElementById("load").title = "Load the bundled hello-world example graph.";
+    document.getElementById("connect").title = TIPS["bar.connect"];
+    document.getElementById("save").title = "Hand the designer JSON to Hermes as a workflow save message.";
     document.getElementById("load").addEventListener("click", loadExample);
     document.getElementById("connect").addEventListener("click", connect);
     document.getElementById("save").addEventListener("click", saveToHermes);
@@ -852,6 +1122,7 @@
       document.querySelectorAll("#palette [data-kind]"),
       function (button) {
         var kind = button.getAttribute("data-kind");
+        button.title = TIPS[kind] || kind;
         button.addEventListener("click", function () { addNode(kind); });
         button.addEventListener("dragstart", function (ev) {
           ev.dataTransfer.setData("text/plain", kind);

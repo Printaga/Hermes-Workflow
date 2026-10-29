@@ -33,6 +33,11 @@ REQUIRED_ROUTES = {
     ("/designs/{name}/validate", "post"),
     ("/designs/{name}/run", "post"),
     ("/runs/{run_id}/respond", "post"),
+    # Schedules view: the delivery-target picker and the cron jobs this plugin created.
+    ("/channels", "get"),
+    ("/schedules", "get"),
+    ("/designs/{name}/schedule", "post"),
+    ("/schedules/{job_id}/{action}", "post"),
 }
 SAVE_ROUTE = ("/designs/{name}", "post")
 # The agent-node picker lists host profiles; the canvas falls back to a text field when the

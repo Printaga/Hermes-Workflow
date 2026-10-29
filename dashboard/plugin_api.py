@@ -23,10 +23,17 @@ if str(_PLUGIN_ROOT) not in sys.path:
 
 from fastapi import APIRouter, Body, HTTPException  # noqa: E402
 
+from visual_workflow_hermes.channels import list_host_channels  # noqa: E402
 from visual_workflow_hermes.convert import build_run_plan  # noqa: E402
 from visual_workflow_hermes.delivery import deliver_output  # noqa: E402
 from visual_workflow_hermes.profiles import list_host_profiles  # noqa: E402
 from visual_workflow_hermes.runner import StepError, new_state, resume_plan, run_plan  # noqa: E402
+from visual_workflow_hermes.schedule import (  # noqa: E402
+    apply_action,
+    build_cron,
+    list_workflow_jobs,
+    schedule_design,
+)
 from visual_workflow_hermes.schema import validate_designer_graph  # noqa: E402
 from visual_workflow_hermes.store import DesignStore, RunStore  # noqa: E402
 
@@ -96,6 +103,17 @@ def list_profiles() -> dict:
     return {"profiles": profiles, "available": bool(profiles)}
 
 
+@router.get("/channels")
+def list_channels() -> dict:
+    """Delivery targets ("channels") for the output-node picker.
+
+    Always 200: an empty list with ``available: false`` is the honest answer when the host
+    gateway has discovered no chats, and the canvas then says so instead of offering a dead
+    control. Reads the host's channel directory only — nothing is sent here.
+    """
+    return list_host_channels(_home())
+
+
 @router.get("/designs")
 def list_designs() -> dict:
     """Names of the saved designs under ``$HERMES_HOME/workflow-designs``."""
@@ -162,6 +180,57 @@ def run_design(name: str) -> dict:
     runs.save(state)
     state = run_plan(plan, state, spawn=None, on_step=runs.save, deliver=deliver_output)
     return _result(state)
+
+
+@router.get("/schedules")
+def list_schedules() -> dict:
+    """Cron jobs this plugin created (``name`` starts with ``workflow:``).
+
+    Read-only: an empty list with ``available: false`` means the host scheduler could not be
+    read here, which the Schedules view states instead of pretending there are no jobs.
+    """
+    return list_workflow_jobs()
+
+
+@router.post("/designs/{name}/schedule")
+def schedule_design_route(name: str, payload: Optional[dict] = Body(default=None)) -> dict:
+    """Turn a design's trigger into a real Hermes cron job (create or update it).
+
+    Body (all optional): ``{"preset": "daily", "time": "09:00", "weekday": "mon",
+    "cron": "0 9 * * *", "deliver": "origin"}``. The chosen schedule is written onto the
+    design's trigger node, so the canvas and the job cannot disagree. A scheduling problem is
+    an expected outcome: 200 with ``{"ok": false, "error": ...}``.
+    """
+    body = payload if isinstance(payload, dict) else {}
+    designer = _load_design(name)
+    try:
+        cron = build_cron(
+            str(body.get("preset") or (designer.get("trigger_mode") or "daily")),
+            time=str(body.get("time") or "09:00"),
+            weekday=str(body.get("weekday") or "mon"),
+            custom=str(body.get("cron") or ""),
+        )
+    except ValueError as exc:
+        return {"ok": False, "name": name, "error": str(exc)}
+    trig = next((n for n in designer.get("nodes", [])
+                 if isinstance(n, dict) and n.get("type") == "trigger"), None)
+    if trig is None:
+        raise HTTPException(status_code=400, detail="design has no trigger node")
+    trig["trigger_mode"] = "schedule"
+    trig["schedule"] = cron
+    designer = {**designer, "name": name}
+    errors = validate_designer_graph(designer)
+    if errors:
+        return {"ok": False, "name": name, "errors": errors}
+    _designs().save(name, designer)
+    result = schedule_design(designer, cron=cron, deliver=str(body.get("deliver") or "origin"))
+    return {**result, "name": name, "cron": cron}
+
+
+@router.post("/schedules/{job_id}/{action}")
+def schedule_action(job_id: str, action: str) -> dict:
+    """Pause / resume / run-now / remove one scheduled workflow job."""
+    return {**apply_action(action, job_id), "job_id": job_id}
 
 
 @router.post("/runs/{run_id}/respond")
