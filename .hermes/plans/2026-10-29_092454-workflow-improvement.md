@@ -85,3 +85,27 @@ Make the visual-workflow plugin so simple a non-technical user succeeds on first
 3. **Webhook auth is the hard part of Task 3**, not the route. If Hermes webhooks can't give us an unguessable per-workflow URL, removal is the correct outcome.
 4. **Three canvases remain.** Task 6 detects drift; unification waits until a second drift actually bites (YAGNI).
 5. **Open question for the user:** should timeouts also apply to `awaiting_agent` pauses (subagent never returns)? Proposal: no — agent pauses are worked by the host turn, not wall-clock; only human gates get timeouts. Speak now if otherwise.
+
+## Deployment trap (learned live, 2026-10-29)
+
+The installed plugin is a **git clone** at `~/.hermes/plugins/visual-workflow` (origin = this
+repo), and it silently went stale: it sat on `03dc81f` while `main` was two commits ahead, and
+`hermes plugins update` still reported "up-to-date". The gateway serves *that copy*, so a live
+test can pass against old code and prove nothing.
+
+Rules for every task below:
+
+1. After **every commit that changes Python (or the dashboard bundle)**, deploy before any live
+   check: `hermes plugins disable visual-workflow && hermes plugins enable visual-workflow`.
+   That path rebuilds from the clone; `hermes plugins update` is not trustworthy.
+2. Then **verify the active copy**, never the working tree:
+   `grep -c "<feature marker>" ~/.hermes/plugins/visual-workflow/{visual_workflow_hermes,dashboard}/…`
+   and `git -C ~/.hermes/plugins/visual-workflow log --oneline -1`.
+3. If the clone is behind, `git -C ~/.hermes/plugins/visual-workflow pull --ff-only` first —
+   enabling alone does not fetch. Local edits in that clone (it had one in README) block a
+   fast-forward; inspect, stash and drop them rather than forcing.
+4. A browser tab keeps the old JS bundle: reload the Workflows tab after a bundle change.
+5. Live HTTP checks against the gateway (`127.0.0.1:9119`) answer **401** without a dashboard
+   session, so verify a route by importing the deployed `dashboard/plugin_api.py` by path and
+   calling the handler against the real `$HERMES_HOME` store — that is the same code the
+   session-protected route runs.
