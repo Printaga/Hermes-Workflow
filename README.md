@@ -50,15 +50,21 @@ Turn it on once: **Settings → Capabilities → Plugins → Workflows → enabl
 Desktop's plugin-decisions store, and the row then loads on every launch (the file is also
 fs-watched, so edits hot-reload).
 
-If the row is still missing after that, check in Desktop DevTools (View → Toggle Developer Tools) —
-the disabled path logs nothing, so the console is empty either way:
+If the row is still missing after that, three checks in Desktop DevTools (View → Toggle Developer
+Tools) settle where it stopped. The disabled path logs nothing — the loader only writes
+`[plugins] runtime load failed (<origin>)` when a load actually throws — so silence is evidence,
+not proof:
 
 ```js
 JSON.parse(localStorage.getItem('hermes.desktop.pluginDecisions.v2') || '{}')['visual-workflow']
-// undefined => never enabled (the marker's opt-in posture is still in force); true => enabled
-document.querySelector('[data-tour="sidebar-nav-visual-workflow:workflows-nav"]')
-// null => register() never ran: no /workflows route, no sidebar row. Look for `[plugins]` errors
+// undefined = never decided (the marker's opt-in posture still applies) | true = enabled | false = off
 ```
+
+1. The value above — `undefined` means the toggle never took.
+2. The `[plugins]` filter in the console — any `runtime load failed` line is a real import error
+   in `plugin.js` (the row would show as `disabled`, not missing).
+3. `ls "$HERMES_HOME/desktop-plugins/visual-workflow/.hermes-package.json"` — the marker is what
+   makes the folder opt-in; delete the folder and reinstall the package to regenerate both.
 
 ## Use
 
