@@ -136,10 +136,7 @@
     "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
     "bar.name": "Name this workflow is saved and run under.",
     "bar.validate": "Check the graph without saving it.",
-    "bar.save": "Validate and store the workflow.",
-    "bar.run": "Run it now: advance until it finishes or pauses at a gate.",
     "bar.connect": "Connect the two most recently clicked nodes (parent first).",
-    "bar.delete": "Delete the selected node, or cut the selected edge.",
     "presets.daily": "Runs once every day at the time you pick.",
     "presets.weekdays": "Runs Monday to Friday at the time you pick.",
     "presets.weekly": "Runs once a week on the day and time you pick.",
@@ -867,6 +864,15 @@
     reading.textContent = problem || describeCron(node.schedule);
     reading.title = TIPS["trigger.schedule"];
     wrap.appendChild(reading);
+
+    // This file is a standalone designer with no host: a cron expression here is a note, not a
+    // job. Say so instead of letting a saved schedule look armed.
+    var hostOnly = document.createElement("p");
+    hostOnly.className = "hint";
+    hostOnly.title = TIPS["schedule.save"];
+    hostOnly.textContent = "This standalone designer only records the schedule. Save the " +
+      "workflow in Hermes, then press Schedule in Hermes in the Workflows tab.";
+    wrap.appendChild(hostOnly);
     return wrap;
   }
 

@@ -71,7 +71,8 @@ const TIPS = {
   "schedules.resume": "Let the schedule fire again.",
   "schedules.run": "Run the workflow once now, without waiting for the next time.",
   "schedules.remove": "Delete the cron job; the saved workflow stays.",    "schedules.create": "Create or update the Hermes cron job for the chosen workflow.",
-    "runs.approve": "Answer this gate now; the run resumes from where it stopped.",
+    "schedule.status": "Whether Hermes really has a cron job for this workflow, and when it next fires.",
+  "runs.approve": "Answer this gate now; the run resumes from where it stopped.",
     "runs.open": "Open the saved workflow this run belongs to.",
     "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
@@ -912,6 +913,38 @@ function createDesigner(host, call) {
     reading.title = TIPS["trigger.schedule"];
     wrap.appendChild(reading);
 
+    // A cron expression on the canvas is only a plan; say whether Hermes actually has the job.
+    const statusLine = document.createElement("p");
+    statusLine.className = "vw-hint";
+    statusLine.title = TIPS["schedule.status"];
+    statusLine.textContent = "Hermes cron: checking\u2026";
+    wrap.appendChild(statusLine);
+    const jobStatus = () => {
+      const owner = currentName();
+      if (!owner) {
+        statusLine.className = "vw-hint";
+        statusLine.textContent = "Hermes cron: save the workflow, then schedule it.";
+        return;
+      }
+      call("/schedules").then((data) => {
+        const jobs = (data && data.jobs) || [];
+        const job = jobs.find((candidate) => (candidate.design || "") === owner);
+        statusLine.className = "vw-hint";
+        if (!data || !data.available) {
+          statusLine.textContent = "Hermes cron: the scheduler could not be read here.";
+        } else if (job) {
+          statusLine.textContent = "Hermes cron: " + job.state +
+            (job.next_run_at ? " \u00b7 next " + job.next_run_at : "") +
+            "  (" + job.schedule + ")";
+        } else {
+          statusLine.textContent = "Hermes cron: not scheduled yet \u2014 press Schedule in Hermes.";
+        }
+      }).catch(() => {
+        statusLine.textContent = "Hermes cron: could not be read.";
+      });
+    };
+    jobStatus();
+
     const apply = button("Schedule in Hermes", () => {
       const name = currentName();
       if (!name) {
@@ -940,6 +973,7 @@ function createDesigner(host, call) {
         reading.textContent = (data.created ? "scheduled \u00b7 " : "updated \u00b7 ") +
           describeCron(data.cron || node.schedule);
         refreshDesigns();
+        jobStatus();
       }).catch((err) => {
         reading.className = "vw-error";
         reading.textContent = explain(err);

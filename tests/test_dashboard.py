@@ -332,6 +332,14 @@ def test_entry_talks_to_the_backend_only_through_the_sdk(entry):
     assert "fetch(" not in entry.replace("fetchJSON", "")
 
 
+def test_schedule_inspector_says_whether_hermes_has_the_job(entry):
+    """The canvas edits a cron string; only the host knows whether a job exists."""
+    assert "function jobStatus()" in entry
+    assert '"Hermes cron: "' in entry
+    assert "not scheduled yet" in entry
+    assert 'TIPS["schedule.status"]' in entry
+
+
 def test_entry_has_a_runs_view_that_answers_gates_inline(entry):
     """Runs started elsewhere must be listed and answerable from the canvas itself."""
     assert "function RunsPanel" in entry

@@ -124,6 +124,13 @@ def test_agent_picker_reads_the_plugin_profiles_route(source):
     assert "profile / bot" in source
 
 
+def test_schedule_inspector_says_whether_hermes_has_the_job(source):
+    assert "const jobStatus = () =>" in source
+    assert "Hermes cron: " in source
+    assert "not scheduled yet" in source
+    assert 'TIPS["schedule.status"]' in source
+
+
 def test_runs_view_lists_every_run_and_answers_gates(source):
     """A run started in chat or by a cron job must be visible and answerable here too."""
     assert 'data-vw="view-runs"' in source

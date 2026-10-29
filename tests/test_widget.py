@@ -139,3 +139,9 @@ def test_output_node_can_deliver_and_validates_its_target(html):
     assert 'field("deliver"' in html
     assert '"notification"' in html and '"channel"' in html
     assert 'field("target"' in html
+
+
+def test_schedule_fields_say_this_file_cannot_create_the_job(html):
+    """A cron expression here is a note, not a job — the widget must not imply otherwise."""
+    assert "This standalone designer only records the schedule" in html
+    assert 'TIPS["schedule.save"]' in html
