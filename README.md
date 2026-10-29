@@ -8,14 +8,28 @@ itself. No external workflow engine is involved.
 Designs live as plain JSON under `~/.hermes/workflow-designs/<name>.json`; run state lives under
 `~/.hermes/workflow-runs/<run_id>.json`.
 
+## Where you actually work
+
+There are three surfaces, and none of them starts itself:
+
+| Surface | How it is there | What it has |
+| --- | --- | --- |
+| Dashboard tab | `hermes dashboard`, then open the **Workflows** tab in the browser | Full canvas plus the API-backed pickers (bots, chats, templates), Runs and Schedules views |
+| Desktop tab | The **Desktop app** running, with the plugin enabled once in Settings → Capabilities → Plugins (see below) | The same canvas, drawing through the app's own REST door |
+| `/workflow` + tools | The gateway serving this plugin, in any chat session | The chat half: save, validate, run, answer a gate — no canvas |
+
+If the toolbar buttons in a tab look inert, the tab is a stale bundle: reload the page after a
+plugin update. Nothing in this plugin runs on a timer — a saved design does nothing until you
+press **Run** or point a schedule at it.
+
 ## Node kinds
 
 | Kind | Fields | Run-plan mapping |
 | --- | --- | --- |
 | `trigger` | `trigger_mode` (`manual`/`schedule`), `schedule` cron | Not a step: recorded in `plan["meta"]["trigger"]`. Exactly one per design. |
-| `agent` | `prompt` (required), `profile`, `model`, `provider`, `schema`, `inputs`, `timeout` | A step that runs an agent. `profile` picks a host bot; its model/provider apply unless the node overrides them. Without a subagent backend it pauses as `awaiting_agent` with `pending.prompt`. |
+| `agent` | `prompt` (required), `profile`, `model`, `provider`, `schema`, `inputs`, `timeout`, `retries` | A step that runs an agent. `profile` picks a host bot; its model/provider apply unless the node overrides them. `retries` (0–3, default 0) re-runs the step when the bot fails, and `attempts` in the run state records how many tries it took. Without a subagent backend it pauses as `awaiting_agent` with `pending.prompt`. |
 | `condition` | `expression` (required) — `out.<node>.<field> <op> <value>` | Evaluated locally against upstream outputs; a false gate skips its downstream subtree (reported in `skipped`). |
-| `approval` | `question` (required), `options`, `context` | Pauses the run as `awaiting_approval` until `workflow_design_respond` answers it. |
+| `approval` | `question` (required), `options`, `context`, `timeout_minutes`, `on_timeout` | Pauses the run as `awaiting_approval` until `workflow_design_respond` answers it. `timeout_minutes` (1–4320) is a deadline: once it passes the run fails with `approval timed out`, and a late answer gets that verdict instead of resuming. `on_timeout` is `reject` (default) or `escalate` (recorded as `detail: "escalation requested"`; real re-routing is Phase 2). |
 | `output` | `deliver` (`notification`/`channel`), `target` | Collects its parents' outputs under `outputs`, then optionally sends that text through the host send seam. `notification` targets a platform's home channel (`telegram`); `channel` needs `<platform>:<chat id>` (`slack:#ops`). A failed send is recorded in `deliveries`, never fails the run. |
 
 Edges are `after: [<node-id>...]`: a node runs once all of its parents have run. Layout `x`/`y`
@@ -35,6 +49,22 @@ step kind:
 Because it is not a step, a design of only a note is still invalid — a workflow needs exactly
 one trigger and at least one executable node. Use notes freely; they change nothing about how
 the workflow runs.
+
+## Start from a template
+
+Four worked designs ship in `examples/` and the **start from a template** picker in the top row
+of the canvas loads any of them onto the canvas as an unsaved draft:
+
+| Template | Shape |
+| --- | --- |
+| `hello-world` | one agent, one output — the smallest useful workflow |
+| `daily-digest` | schedule trigger (`0 9 * * *`) → agent with one retry → output |
+| `approval-demo` | all five kinds: condition filters a short draft, then a human gate |
+| `review-gate` | agent → approval with a 60-minute deadline → output, plus a sticky note |
+
+The list is `GET /designs/templates`, which reads `examples/*.designer.json` at request time, so
+a copy of the plugin with no `examples/` simply shows no templates. Each file carries its own
+`title` and `description`; the tests validate every example, so a template can never ship broken.
 
 ## Install
 
@@ -120,14 +150,31 @@ The agent-facing tools mirror the verbs:
 
 ## Triggers
 
-* **Manual** — `/workflow run <name>` (the only fully wired trigger today).
-* **Schedule** — `triggers.schedule_plan()` renders the exact `cronjob_manage` arguments for a
-  `schedule` trigger: a self-contained prompt that makes the cron session call
-  `workflow_design_run` and resume any `awaiting_agent` step. Registering the job stays a
-  deliberate, user-initiated action.
+* **Manual** — the Run button, `/workflow run <name>`, or the `workflow_design_run` tool.
+* **Schedule** — a `schedule` trigger in the canvas feeds the **Schedules** view, which creates a
+  real Hermes cron job (`cronjob_manage`) on your say-so; `triggers.schedule_plan()` is the same
+  call as a payload, for scripting. The job's prompt is self-contained: a cron run opens a
+  **fresh session**, calls `workflow_design_run`, and answers any `awaiting_agent` step itself.
+  It never answers a human gate — an approval pauses the run and waits for a person, and its
+  `timeout_minutes` deadline is what stops an abandoned gate from waiting forever.
 * **Inbound HTTP** — not a designer mode, because a plugin cannot open a route. Hermes'
   operator-managed `hermes webhook subscribe` (HMAC secret) can fire the schedule's cron job,
   so an outside POST *reaches* a schedule without the canvas pretending to own a URL.
+
+## Limits worth knowing
+
+* **One bot, model and provider per step.** The agent picker lists host profiles and overrides
+  the model/provider for that step only. It does not re-home skills, tools or memory: a step runs
+  as the active bot with those two overrides, and picking "the writer bot" does not give the step
+  the writer's skill set.
+* **Sequential, and no loops.** Steps run one at a time in dependency order. Parallel branches
+  need concurrent agent turns the host seam does not offer; loops risk unbounded runs with no
+  supervisor yet. Branch with a condition instead — a false gate skips its downstream subtree.
+* **Run history is files, not a database.** The **Runs** view lists `~/.hermes/workflow-runs/*.json`
+  newest-first (including runs started from chat or cron), and reading a run is the moment its
+  gate deadline is enforced. Deleting a file forgets the run; there is no pruning job.
+* **Delivery is best-effort.** A failed send is recorded in `deliveries` with `ok: false` and a
+  `detail`, and the run still finishes — check `deliveries` rather than assuming a message went out.
 
 ## OpenBot parity notes
 
@@ -142,5 +189,7 @@ pytest                # bare pytest works: pyproject pins pythonpath = ["."]
 ```
 
 The suite covers the schema, the store, the converter/topological order, the runner (gates,
-skips, resume, pruning), the cron plan, the widget's embedded graph and its dependency-free
-guarantees, and every slash-command verb.
+skips, resume, pruning, retries, timeouts), the cron plan, every shipped template (each one must
+validate and convert), the dashboard router and its live endpoints, all three canvases' layout
+and controls, the widget's embedded graph and its dependency-free guarantees, and every
+slash-command verb.

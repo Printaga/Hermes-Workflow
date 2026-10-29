@@ -17,9 +17,14 @@ from an output port to another node to add an edge, click an edge and press Dele
 `trigger`, `agent`, `condition`, `approval`, `output`.
 
 * exactly one `trigger` per design; `trigger_mode` is `manual` or `schedule`
-* `agent` needs `prompt`; optional `profile` (a host bot), `model` / `provider` (override it)
+* `agent` needs `prompt`; optional `profile` (a host bot), `model` / `provider` (override it),
+  and `retries` (0–3, default 0 — extra attempts when the bot call fails; only agent steps
+  retry, because re-asking a human gate is not a retry and a condition is deterministic)
 * `condition` needs `expression` of the form `out.<node>.<field> <op> <value>`
-* `approval` needs `question`; `options` is a list of acceptable answers
+* `approval` needs `question`; `options` is a list of acceptable answers. Optional
+  `timeout_minutes` (1–4320) is a deadline and `on_timeout` is `reject` or `escalate`; once the
+  deadline passes the run is `failed` with `approval timed out` and a late answer gets that
+  verdict, so a gate never waits forever
 * `output` collects its parents' outputs; optional `deliver` (`notification` for a platform's
   home channel, `channel` for a specific chat) plus a `target` (`telegram`, `telegram:123456`,
   `slack:#ops`). Leave both off to only collect. Never claim a delivery happened — read
@@ -31,6 +36,14 @@ A **note** (`{"id", "type": "note", "text", "x", "y", "color"}`) is a sticky lab
 person reading the canvas. It is not a sixth step: it has no ports, takes no edges, is dropped
 by the converter like a trigger, and never reaches the runner. Use it to annotate; never route
 work through it.
+
+## Start from a template, not a blank page
+
+`examples/*.designer.json` are four working designs — `hello-world`, `daily-digest`,
+`approval-demo`, `review-gate`. In a canvas, the **start from a template** picker in the top row
+loads one as an unsaved draft; `GET /designs/templates` returns the same list (with the graph
+inline) for scripting. Editing a template and saving it under a new name is the fastest correct
+start; do not invent field names from memory.
 
 ## Workflow
 
@@ -49,13 +62,24 @@ work through it.
   `workflow_design_respond` with `run_id`, `node_id` and the chosen `answer`.
 * `awaiting_agent` — perform `pending.prompt` yourself, then respond with the output as
   `answer` (or `structured` for a JSON object conditions can read).
-* `failed` — report `error`; do not retry blindly.
+* `failed` — report `error`; do not retry blindly. A gate that expired says
+  `approval timed out`; a step that ran out of `retries` says what the bot returned.
 
 Never guess a `run_id` or gate id: use the ones in the response.
 
 ## Triggers
 
-Manual runs are wired. For a `schedule` trigger, `triggers.schedule_plan(design)` yields the
-`cronjob_manage` arguments; ask the user before registering anything recurring. Inbound HTTP
-is not a mode: point the user at `hermes webhook subscribe`, which can fire that cron job —
-never promise a listener the plugin does not own.
+Manual runs are wired from chat and from every canvas. Recurring runs are created from the
+canvas's **Schedules** view (a real Hermes cron job) or from `triggers.schedule_plan(design)`,
+which yields the same `cronjob_manage` arguments; ask the user before registering anything
+recurring. A scheduled replay opens a **fresh session** and answers `awaiting_agent` steps
+itself, but it never answers a human gate — that waits for a person until `timeout_minutes`.
+Inbound HTTP is not a mode: point the user at `hermes webhook subscribe`, which can fire that
+cron job — never promise a listener the plugin does not own.
+
+## Reports you can make
+
+Read the run, do not narrate it: `outputs` (per node), `skipped` (nodes a false condition gated
+off), `attempts` (tries each agent step took), `deliveries` (each send attempt with `ok`),
+`error` (`{node_id, msg}`) when a run failed. The **Runs** view in a canvas lists the same runs
+on disk, newest first.
