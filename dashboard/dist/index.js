@@ -895,7 +895,9 @@
         wrap.appendChild(field("day", day, TIPS["trigger.weekday"]));
       }
 
-      if (preset !== "hourly" && preset !== "custom") {
+      // Shown for hourly too: buildCron takes the MINUTE from it, so hiding the field
+      // silently pinned "every hour" to :00 with no way to choose :15.
+      if (preset !== "custom") {
         var time = textInput(timeOf(node.schedule), function (v) {
           if (!timeParts(v)) {
             reading.className = "vw-error";
@@ -1649,7 +1651,7 @@
       }, WEEKDAYS.map(function (pair) {
         return h("option", { key: pair[0], value: pair[0], title: TIPS["trigger.weekday"] }, pair[1]);
       })) : null,
-      preset === "hourly" || preset === "custom" ? null : h("input", {
+      preset === "custom" ? null : h("input", {
         type: "text", value: time, title: TIPS["trigger.time"],
         onChange: function (ev) { setTime(ev.target.value); },
       }),

@@ -8,10 +8,14 @@ this plugin's own tools instead of a tool name plus arguments.
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 
 import pytest
 
 from visual_workflow_hermes import schedule
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 # ------------------------------------------------------------------ build_cron
@@ -224,6 +228,36 @@ def test_the_job_reply_is_returned_in_the_view_shape(cron):
     assert job == {"job_id": "job1", "name": "workflow:daily", "design": "daily",
                    "schedule": "0 9 * * *", "next_run_at": "2026-10-30T09:00",
                    "last_run_at": None, "last_status": None, "state": "enabled"}
+
+
+# ------------------------------------------------------------ canvas parity
+CANVASES = {
+    "dashboard": ROOT / "dashboard" / "dist" / "index.js",
+    "desktop": ROOT / "desktop" / "plugin.js",
+    "widget": ROOT / "widgets" / "designer.html",
+}
+
+
+def test_no_canvas_hides_the_time_field_behind_the_hourly_preset():
+    """``build_cron("hourly")`` takes the MINUTE from the time field.
+
+    All three canvases hid that field for ``hourly``, so "every hour" was silently pinned to
+    :00 and the :15 the user wanted was unreachable — a control that lied by omission.
+    """
+    for name, path in CANVASES.items():
+        source = path.read_text(encoding="utf-8")
+        assert not re.search(r'[Pp]reset\s*!==\s*"hourly"', source), (
+            f"{name}: the time field must stay visible for the hourly preset"
+        )
+        assert not re.search(r'[Pp]reset\s*===\s*"hourly"\s*\|\|', source), (
+            f"{name}: an hourly guard still hides a field that hourly needs"
+        )
+        assert re.search(r'[Pp]reset\s*!==\s*"custom"', source), (
+            f"{name}: only the advanced (custom cron) preset may hide the time field"
+        )
+        assert 'field("time (24h)"' in source or 'title: TIPS["trigger.time"]' in source, (
+            f"{name}: the time control is gone entirely"
+        )
 
 
 def test_the_host_seam_parses_the_json_string_the_tool_returns(monkeypatch):

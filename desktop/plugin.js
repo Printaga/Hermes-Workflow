@@ -886,7 +886,9 @@ function createDesigner(host, call) {
       wrap.appendChild(field("day", day, TIPS["trigger.weekday"]));
     }
 
-    if (preset !== "hourly" && preset !== "custom") {
+    // Shown for hourly too: buildCron takes the MINUTE from it, so hiding the field
+    // silently pinned "every hour" to :00 with no way to choose :15.
+    if (preset !== "custom") {
       const time = textInput(timeOf(node.schedule), (v) => {
         if (!timeParts(v)) {
           reading.className = "vw-error";
@@ -1509,7 +1511,8 @@ function createDesigner(host, call) {
       form.appendChild(field("day", day, TIPS["trigger.weekday"]));
     }
 
-    if (schedPreset !== "hourly" && schedPreset !== "custom") {
+    // Hourly keeps the field: only its minute survives into the cron expression.
+    if (schedPreset !== "custom") {
       const time = textInput(schedTime, (v) => {
         schedTime = v;
       }, "09:00");
