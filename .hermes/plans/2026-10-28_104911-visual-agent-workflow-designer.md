@@ -1404,3 +1404,61 @@ Commit: `docs(install): README, SKILL.md, packaging`.
    OpenBot's `--- event from a local script ---`, never concatenated into agent
    instructions. Approval answers only ever flow through the `workflow` tool's `release`
    — the plugin never auto-approves, and browser-takeover/secret gates stay manual.
+
+---
+
+## Addendum (2026-10-29) — OpenBot parity study (`nightly-labs/openbot`, cloned to `~/.hermes/cache/scratch/openbot-ref`)
+
+### How OpenBot builds routines
+
+Read from `docs/automation.md`, `packages/contracts/src/ipc-workflows.ts` (686 lines — the whole
+routine surface is typed there), `apps/web` routine editor and the local-scripts API.
+
+* **Model.** A routine is `{ id, name, prompt, enabled, schedule, filters[], actions[] }` — a
+  *prompt* plus **filters** (conditions) plus **actions** (outputs), all attached to the *one*
+  agent that owns the routine. There is no node graph and no explicit branch/A-B edge: the
+  agent is the executor, the routine is a lens on it. Triggers are first-class fields:
+  `schedule` (cron / `every` interval), webhook (local-scripts listener), and manual
+  ("Run now"). A routine can be disabled without being deleted.
+* **Agent binding.** Implicit: routines live in the agent's own store, so `agentId` is the
+  owner, not a node field. There is no picker because there is nothing to pick — one agent,
+  many routines.
+* **Conditions.** Two shapes: `filters` (deterministic match on event fields / prompt text,
+  ANDed, evaluated before the agent runs) and prompt-level branching (the agent decides
+  inside its own turn). No edge-level conditional routing in the contract.
+* **Approval gates.** Not part of a routine. Approval is a *session* concept elsewhere in the
+  app; automation runs unattended, and the documented escape hatch is to have the prompt ask
+  the agent to stop and report. (`pending/answer/respond` routes are local-scripts session
+  RPC — a human driving an agent, not a gate inside a workflow.)
+* **Outputs / delivery.** `actions[]` is the delivery list: notify (desktop notification),
+  send to a messaging channel, write a file, or call an MCP tool. Each action carries its own
+  target (channel id, path, tool + args). Delivery is whatever `actions` says, in order.
+* **Failure model.** Per-run status (`success` / `error` / `cancelled`) recorded on the run
+  row with the error text; a failing action does not roll back earlier actions. No retry
+  policy beyond the schedule firing again.
+
+### Capability map — OpenBot → this plugin
+
+| OpenBot capability | Ours today | Status |
+| --- | --- | --- |
+| Manual trigger ("Run now") | Run button → `run_plan` | **have** |
+| Schedule trigger (cron / interval) | `triggers.py` cron + `replay-prompts` on tick | **have** |
+| Webhook trigger (local listener + bearer token) | `triggers.py` webhook, localhost-only, token file | **have** |
+| Agent binding | agent node `profile` / `model` fields, passed through `convert.py` → `run_plan` → `spawn` | **gap: no picker.** Field exists and works, but the designer gives you a free-text box — you must know the profile id. OpenBot has no picker either, but only because binding is implicit; with N nodes we need one. → **PART 2b** |
+| Conditions / branching | `condition` node + `condition`/`when` edge predicates, `evaluate_condition` | **have (stronger than OpenBot**: real edge routing**)** |
+| Approval gate | `approval` node → `run_plan` pauses, host `pending/answer` drives `resume_plan` | **have (stronger**: OpenBot has none**)** |
+| Notify output | output node stores text; nothing delivers it | **gap** → **PART 2c** |
+| Channel / messaging output | same | **gap** → **PART 2c** |
+| Multiple ordered actions per run | one output node per branch | **gap (accepted, v1)**: two output nodes on one branch deliver in edge order instead of an `actions[]` array. Revisit only if users ask for ordered fan-out. |
+| Per-run status + error text | `state` json + `step` errors surfaced per node | **have** |
+| Filters (pre-run field match) | condition node does this *inside* the graph | **have (different shape, same power)** |
+| Attachments / file outputs | text only | **gap (accepted, v1)** — matches the existing text-only plan |
+
+### What this changes
+
+Only PART 2b and 2c are real feature gaps; both are *wiring*, not new architecture — the
+seams (profile passthrough, host send) already exist. The node model stays as designed: our
+graph is strictly more expressive than an OpenBot routine, so no node types are added or
+removed. One deliberate divergence: OpenBot runs unattended with no approval gate; we *keep*
+the gate, since a paused workflow is the safer default for anything that touches a real
+channel.
