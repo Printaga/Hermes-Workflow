@@ -11,7 +11,15 @@
     color: var(--foreground, #d8d8d8);
     text-align: left;
   }
-  #app { display: flex; flex-direction: column; height: 100%; }
+  #app {
+    display: flex; flex-direction: column; height: 100%;
+    /* Sticky-note tints. Each mixes a fixed hue with the host card so the label stays
+       readable in a light or dark theme instead of pinning a raw colour. */
+    --vw-note-yellow: color-mix(in srgb, #f2d16b 22%, var(--card, #1e1e1e));
+    --vw-note-blue: color-mix(in srgb, #6ea8fe 22%, var(--card, #1e1e1e));
+    --vw-note-green: color-mix(in srgb, #34d399 22%, var(--card, #1e1e1e));
+    --vw-note-red: color-mix(in srgb, #fb2c36 22%, var(--card, #1e1e1e));
+  }
   #bar {
     display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
     padding: 8px 0; border-bottom: 1px solid var(--border, #3a3a3a);
@@ -89,6 +97,7 @@
     <button class="pill tool" type="button" draggable="true" data-kind="condition"><span class="ico">◇</span>Condition</button>
     <button class="pill tool" type="button" draggable="true" data-kind="approval"><span class="ico">✓</span>Approval</button>
     <button class="pill tool" type="button" draggable="true" data-kind="output"><span class="ico">▤</span>Output</button>
+    <button class="pill tool" type="button" draggable="true" data-kind="note"><span class="ico">✎</span>Note</button>
     <p class="hint">Click a node to add it, or drag it onto the canvas. Drag a node&rsquo;s right port to another node&rsquo;s left port.</p>
   </div>
   <div id="bar">
@@ -125,6 +134,12 @@
 
   var SVG_NS = "http://www.w3.org/2000/svg";
   var KINDS = ["trigger", "agent", "condition", "approval", "output"];
+  // A sticky note: legal canvas content, never a step. `KINDS` stays the five runnable kinds
+  // (the palette list below adds the note), so nothing that validates or converts a workflow
+  // can mistake an annotation for work. Mirrors NOTE_KIND in visual_workflow_hermes/schema.py.
+  var NOTE = "note";
+  var NOTE_COLORS = ["yellow", "blue", "green", "red"];
+  var PALETTE = KINDS.concat([NOTE]);
   var MODES = ["manual", "schedule"];
 
   // ---- tooltips -------------------------------------------------------------
@@ -138,6 +153,7 @@
     condition: "Compares a field from an earlier step and skips the branch when the test fails.",
     approval: "Pauses the run and asks a person to choose or type an answer.",
     output: "Collects the results, and can send them to one of your chats.",
+    note: "A label for you or a teammate: it sits on the canvas and never runs.",
     "trigger.trigger_mode": "How the run starts: manual (you press Run) or schedule (a real Hermes cron job).",
     "trigger.preset": "Pick a schedule in plain words: every day, Monday to Friday, once a week, every hour, or advanced cron.",
     "trigger.time": "Local time of day for the schedule, 24-hour HH:MM (e.g. 09:30).",
@@ -156,6 +172,8 @@
     "output.deliver": "What to do with the results: collect only, notification to your home channel, or one specific chat.",
     "output.target": "Where to send it: platform:chat id like telegram:8522302999, or just the platform for its home channel.",
     "output.target.custom": "Type platform:chat id yourself when the chat list is unavailable.",
+    "note.text": "What the sticky says; it is only for the person reading the canvas.",
+    "note.color": "Tint for the sticky; it is a reading aid, not part of the run.",
     "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
     "bar.name": "Name this workflow is saved and run under.",
     "bar.validate": "Check the graph without saving it.",
@@ -340,9 +358,25 @@
     });
   }
 
+  /** Notes carry one of a fixed set of tints; anything else reads as the default yellow. */
+  function noteColor(n) {
+    var name = String(n.color || "").toLowerCase();
+    return NOTE_COLORS.indexOf(name) >= 0 ? name : "yellow";
+  }
+
   // ------------------------------------------------------- validator port
   // Same demands as visual_workflow_hermes/schema.py, worded identically so a design
   // that passes here passes in Python.
+
+  /** Ids of the annotation nodes; they take no part in connectivity or cycles. */
+  function noteIds(nodes) {
+    return (nodes || []).filter(function (n) {
+      return n && n.type === NOTE;
+    }).map(function (n) {
+      return n.id;
+    });
+  }
+
   function validateGraph(g) {
     var errors = [];
     if (!g || typeof g !== "object" || Array.isArray(g)) {
@@ -361,6 +395,7 @@
     if (unique.length !== ids.length) {
       errors.push({ node: "", field: "nodes", msg: "node ids must be unique" });
     }
+    var annotations = noteIds(nodes);
     var triggers = nodes.filter(function (n) { return n && n.type === "trigger"; });
     if (triggers.length !== 1) {
       errors.push({ node: "", field: "trigger",
@@ -372,6 +407,18 @@
         return;
       }
       var nid = n.id || "", kind = n.type;
+      if (kind === NOTE) {
+        // Informative only: no required fields, no connectivity, no cycle participation.
+        if ((n.after || []).length) {
+          errors.push({ node: nid, field: "after",
+            msg: "a note takes no edges — it is only information" });
+        }
+        if (n.color && NOTE_COLORS.indexOf(String(n.color).toLowerCase()) < 0) {
+          errors.push({ node: nid, field: "color",
+            msg: "color must be one of " + NOTE_COLORS.join(", ") + " or empty" });
+        }
+        return;
+      }
       if (KINDS.indexOf(kind) < 0) {
         errors.push({ node: nid, field: "type",
           msg: "unknown node type '" + kind + "', expected one of " + KINDS.join(", ") });
@@ -388,7 +435,10 @@
           msg: "trigger_mode must be one of " + MODES.join(", ") });
       }
       (n.after || []).forEach(function (dep) {
-        if (ids.indexOf(dep) < 0) {
+        if (annotations.indexOf(dep) >= 0) {
+          errors.push({ node: nid, field: "after",
+            msg: "'" + dep + "' is a note and cannot be a dependency" });
+        } else if (ids.indexOf(dep) < 0) {
           errors.push({ node: nid, field: "after", msg: "unknown dependency '" + dep + "'" });
         } else if (dep === nid) {
           errors.push({ node: nid, field: "after", msg: "node cannot depend on itself" });
@@ -450,6 +500,7 @@
   /** At most two short lines of a node's own text, cut on a word where there is one. */
   function previewLines(n) {
     var text =
+      n.type === "note" ? (n.text || "") :
       n.type === "agent" ? (n.prompt || "") :
       n.type === "condition" ? (n.expression || "") :
       n.type === "approval" ? (n.question || "") :
@@ -565,12 +616,16 @@
       var tip = svgEl("title", {});
       tip.textContent = n.id + " · " + (TIPS[n.type] || n.type);
       g.appendChild(tip);
-      g.appendChild(svgEl("rect", {
+      var isNote = n.type === NOTE;
+      var box = {
         width: NODE_W, height: NODE_H, rx: 6,
-        fill: "var(--card)",
+        fill: isNote ? "var(--vw-note-" + noteColor(n) + ")" : "var(--card)",
         stroke: (isSelected || queued) ? "var(--accent)" : "var(--border)",
         "stroke-width": isSelected ? 2 : 1
-      }));
+      };
+      // A dashed edge is the cheapest "this is paper, not a step" cue that survives theming.
+      if (isNote) { box["stroke-dasharray"] = "5 3"; }
+      g.appendChild(svgEl("rect", box));
       var kind = svgEl("text", { x: 9, y: 13, "font-size": 8, fill: "var(--muted-foreground)" });
       kind.textContent = String(n.type).toUpperCase();
       var id = svgEl("text", { x: 9, y: 26, "font-size": 11, fill: "var(--foreground)" });
@@ -584,32 +639,36 @@
         g.appendChild(row);
       });
 
-      var out = svgEl("circle", {
-        cx: NODE_W, cy: NODE_H / 2, r: PORT_R, "class": "port"
-      });
-      out.setAttribute("data-port", "out");
-      out.setAttribute("data-id", n.id);
-      out.addEventListener("mousedown", function (ev) {
-        // The port owns the gesture; without this the node drag starts instead.
-        ev.stopPropagation();
-        ev.preventDefault();
-        beginLink(n, ev);
-      });
-      g.appendChild(out);
-
-      if (n.type !== "trigger") {
-        var inp = svgEl("circle", {
-          cx: 0, cy: NODE_H / 2, r: PORT_R, "class": "port"
+      // A note has no ports at all: it takes no part in the graph, so there is nothing to
+      // drag from and nothing to drop onto.
+      if (n.type !== NOTE) {
+        var out = svgEl("circle", {
+          cx: NODE_W, cy: NODE_H / 2, r: PORT_R, "class": "port"
         });
-        inp.setAttribute("data-port", "in");
-        inp.setAttribute("data-id", n.id);
-        inp.addEventListener("mousedown", function (ev) {
+        out.setAttribute("data-port", "out");
+        out.setAttribute("data-id", n.id);
+        out.addEventListener("mousedown", function (ev) {
+          // The port owns the gesture; without this the node drag starts instead.
           ev.stopPropagation();
           ev.preventDefault();
-          if (linkArm) { finishLink(linkArm, n.id); }
-          else { note("Drag from the right port of the parent node to here."); }
+          beginLink(n, ev);
         });
-        g.appendChild(inp);
+        g.appendChild(out);
+
+        if (n.type !== "trigger") {
+          var inp = svgEl("circle", {
+            cx: 0, cy: NODE_H / 2, r: PORT_R, "class": "port"
+          });
+          inp.setAttribute("data-port", "in");
+          inp.setAttribute("data-id", n.id);
+          inp.addEventListener("mousedown", function (ev) {
+            ev.stopPropagation();
+            ev.preventDefault();
+            if (linkArm) { finishLink(linkArm, n.id); }
+            else { note("Drag from the right port of the parent node to here."); }
+          });
+          g.appendChild(inp);
+        }
       }
 
       wireNode(g, n);
@@ -733,7 +792,9 @@
     linkArm = null;
     var source = node(from), target = node(to);
     if (!source || !target) { return; }
-    if (target.type === "trigger") {
+    if (source.type === NOTE || target.type === NOTE) {
+      note("a note cannot hold a workflow step");
+    } else if (target.type === "trigger") {
       note("a trigger cannot have parents");
     } else if (from === to) {
       note("a node cannot depend on itself");
@@ -983,7 +1044,32 @@
     head.textContent = current.id + " · " + current.type;
     box.appendChild(head);
 
-    if (current.type === "trigger") {
+    if (current.type === NOTE) {
+      box.appendChild(field("note text", textArea(current.text || "", function (v) {
+        current.text = v; draw();
+      }, 3), TIPS["note.text"]));
+      var tint = document.createElement("select");
+      tint.title = TIPS["note.color"];
+      NOTE_COLORS.forEach(function (name) {
+        var option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        option.title = TIPS["note.color"];
+        if (noteColor(current) === name) { option.selected = true; }
+        tint.appendChild(option);
+      });
+      tint.addEventListener("change", function () {
+        current.color = tint.value;
+        draw();
+      });
+      box.appendChild(field("colour", tint, TIPS["note.color"]));
+      // Say the one thing a note is easy to be mistaken for: a step.
+      var why = document.createElement("p");
+      why.className = "hint";
+      why.title = TIPS["note"];
+      why.textContent = "A note is for people reading the canvas; it never runs.";
+      box.appendChild(why);
+    } else if (current.type === "trigger") {
       var select = document.createElement("select");
       select.title = TIPS["trigger.trigger_mode"];
       MODES.forEach(function (mode) {
@@ -1130,6 +1216,7 @@
     if (kind === "agent") { fresh.prompt = ""; }
     if (kind === "condition") { fresh.expression = ""; }
     if (kind === "approval") { fresh.question = ""; }
+    if (kind === "note") { fresh.text = ""; }
     if (typeof x === "number" && typeof y === "number") {
       fresh.x = Math.max(0, Math.round(x - NODE_W / 2));
       fresh.y = Math.max(0, Math.round(y - NODE_H / 2));
@@ -1261,7 +1348,7 @@
     wrap.addEventListener("drop", function (ev) {
       ev.preventDefault();
       var kind = ev.dataTransfer.getData("text/plain");
-      if (KINDS.indexOf(kind) < 0) { return; }
+      if (PALETTE.indexOf(kind) < 0) { return; }
       var p = svgPoint(ev);
       addNode(kind, p.x, p.y);
     });

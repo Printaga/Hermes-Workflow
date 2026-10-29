@@ -27,6 +27,11 @@ from an output port to another node to add an edge, click an edge and press Dele
 
 Edges are `after: [<parent-id>...]`; a node runs after all parents. `x`/`y` are widget-only.
 
+A **note** (`{"id", "type": "note", "text", "x", "y", "color"}`) is a sticky label for the
+person reading the canvas. It is not a sixth step: it has no ports, takes no edges, is dropped
+by the converter like a trigger, and never reaches the runner. Use it to annotate; never route
+work through it.
+
 ## Workflow
 
 1. Build the graph in the designer, **Validate** until it reports `valid`.

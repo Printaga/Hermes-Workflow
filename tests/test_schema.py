@@ -59,6 +59,66 @@ def test_rejects_bad_expression_self_ref_and_cycle():
     assert any("cycle" in e["msg"] for e in validate_designer_graph(cycle))
 
 
+def test_a_note_is_legal_and_changes_nothing_else():
+    """Sticky notes are annotations: they validate, but they are not workflow steps."""
+    graph = {"name": "n", "nodes": [
+        {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "a", "type": "agent", "prompt": "x", "after": ["t"]},
+        {"id": "note1", "type": "note", "text": "remember the tone", "x": 20, "y": 30},
+        {"id": "note2", "type": "note", "text": "", "color": "blue", "x": 0, "y": 0},
+    ]}
+    assert validate_designer_graph(graph) == []
+
+
+def test_a_design_of_only_a_note_is_invalid():
+    """A note cannot start a run: the trigger rule still applies to it."""
+    errors = validate_designer_graph({"name": "n", "nodes": [
+        {"id": "note1", "type": "note", "text": "just a thought"},
+    ]})
+    assert any(e["field"] == "trigger" for e in errors)
+
+
+def test_notes_take_no_edges_in_either_direction():
+    """A note has no ports, so an edge to or from one is a design defect, not a no-op."""
+    note_with_parent = validate_designer_graph({"name": "n", "nodes": [
+        {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "a", "type": "agent", "prompt": "x", "after": ["t"]},
+        {"id": "note1", "type": "note", "text": "hi", "after": ["a"]},
+    ]})
+    assert any(e["node"] == "note1" and e["field"] == "after" for e in note_with_parent)
+
+    depends_on_note = validate_designer_graph({"name": "n", "nodes": [
+        {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "note1", "type": "note", "text": "hi"},
+        {"id": "a", "type": "agent", "prompt": "x", "after": ["t", "note1"]},
+    ]})
+    assert any(e["node"] == "a" and e["field"] == "after" for e in depends_on_note)
+
+
+def test_note_colour_is_checked_against_the_known_set():
+    def graph(**note):
+        node = {"id": "note1", "type": "note", "text": "hi"}
+        node.update(note)
+        return {"name": "n", "nodes": [
+            {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+            {"id": "a", "type": "agent", "prompt": "x", "after": ["t"]}, node]}
+
+    assert validate_designer_graph(graph()) == []
+    assert validate_designer_graph(graph(color="green")) == []
+    assert any(e["field"] == "color"
+               for e in validate_designer_graph(graph(color="chartreuse")))
+
+
+def test_notes_do_not_hide_a_real_cycle():
+    graph = {"name": "c", "nodes": [
+        {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "note1", "type": "note", "text": "look here"},
+        {"id": "a", "type": "agent", "prompt": "x", "after": ["b"]},
+        {"id": "b", "type": "agent", "prompt": "y", "after": ["a"]},
+    ]}
+    assert any("cycle" in e["msg"] for e in validate_designer_graph(graph))
+
+
 def test_approval_timeout_and_policy_are_validated():
     def graph(**approval):
         node = {"id": "g", "type": "approval", "question": "ok?", "after": ["t"]}

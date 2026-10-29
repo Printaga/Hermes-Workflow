@@ -261,8 +261,8 @@ def test_canvas_puts_node_creation_in_a_top_bar(source):
     assert source.index('class="vw-kit"') < source.index('data-vw="canvas"')
     assert "vw-palette" not in source, "the left palette rail must be gone"
     kit = source[source.index('class="vw-kit"'):source.index('class="vw-bar"')]
-    assert kit.count('data-kind="') == 5
-    assert kit.count('class="ico"') == 5
+    assert kit.count('data-kind="') == 6, "five step kinds plus the sticky note"
+    assert kit.count('class="ico"') == 6
 
 
 def test_saved_workflows_move_into_the_top_row(source):
@@ -285,6 +285,23 @@ def test_canvas_fits_its_width_and_recomputes_on_resize(source):
     assert 'setAttribute("viewBox"' in source
     assert "ResizeObserver" in source
     assert "fitLocked" in source
+
+
+# ------------------------------------------------------------ sticky notes
+def test_desktop_offers_sticky_notes_as_annotations(source):
+    assert 'data-kind="note"' in source
+    assert 'const NOTE = "note"' in source
+    assert 'const KINDS = ["trigger", "agent", "condition", "approval", "output"]' in source
+    assert "KINDS.concat([NOTE])" in source
+    assert "NOTE_COLORS" in source
+
+
+def test_a_note_has_no_ports_and_is_edited_as_free_text(source):
+    assert "if (n.type !== NOTE) {" in source
+    assert "a note cannot hold a workflow step" in source
+    assert 'field("note text"' in source
+    assert 'TIPS["note.color"]' in source
+    assert 'n.type === "note" ? n.text || ""' in source
 
 
 def test_nodes_are_compact_with_a_two_line_preview(source):

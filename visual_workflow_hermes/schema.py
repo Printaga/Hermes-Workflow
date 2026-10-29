@@ -4,6 +4,13 @@ from __future__ import annotations
 import re
 
 NODE_KINDS = ("trigger", "agent", "condition", "approval", "output")
+# A sticky note is an annotation for whoever reads the canvas, not a workflow step. It is a
+# legal node so the designer JSON round-trips, but it is excluded from everything that makes a
+# run: it is not a step kind, it takes no edges in either direction (it has no ports), and the
+# converter drops it exactly like a trigger. Its only payload is `text` plus an optional
+# `color`; `x`/`y` are the same widget-only layout keys every node carries.
+NOTE_KIND = "note"
+NOTE_COLORS = ("yellow", "blue", "green", "red")
 # "webhook" was removed rather than stubbed: Hermes' inbound webhooks are operator-managed
 # subscriptions (`hermes webhook subscribe`, HMAC secret) that fire the AGENT or an existing cron
 # job, and a plugin cannot open a route of its own. A design can still be reached from outside by
@@ -52,6 +59,8 @@ def validate_designer_graph(graph: dict) -> list[dict]:
     ids = [n.get("id") for n in nodes if isinstance(n, dict)]
     if len(set(ids)) != len(ids):
         errors.append({"node": "", "field": "nodes", "msg": "node ids must be unique"})
+    note_ids = {n.get("id") for n in nodes
+                if isinstance(n, dict) and n.get("type") == NOTE_KIND}
     triggers = [n for n in nodes if isinstance(n, dict) and n.get("type") == "trigger"]
     if len(triggers) != 1:
         errors.append({"node": "", "field": "trigger",
@@ -61,6 +70,17 @@ def validate_designer_graph(graph: dict) -> list[dict]:
             errors.append({"node": "", "field": "node", "msg": "node must be an object"})
             continue
         nid, kind = n.get("id", ""), n.get("type")
+        if kind == NOTE_KIND:
+            # Informative only: no required fields, no connectivity, no cycle participation.
+            if n.get("after"):
+                errors.append({"node": nid, "field": "after",
+                               "msg": "a note takes no edges \u2014 it is only information"})
+            color = n.get("color")
+            if color not in (None, "") \
+                    and str(color).strip().lower() not in NOTE_COLORS:
+                errors.append({"node": nid, "field": "color",
+                               "msg": f"color must be one of {NOTE_COLORS} or empty"})
+            continue
         if kind not in NODE_KINDS:
             errors.append({"node": nid, "field": "type",
                            "msg": f"unknown node type {kind!r}, expected one of {NODE_KINDS}"})
@@ -73,7 +93,10 @@ def validate_designer_graph(graph: dict) -> list[dict]:
             errors.append({"node": nid, "field": "trigger_mode",
                            "msg": f"trigger_mode must be one of {TRIGGER_MODES}"})
         for dep in n.get("after", []) or []:
-            if dep not in ids:
+            if dep in note_ids:
+                errors.append({"node": nid, "field": "after",
+                               "msg": f"{dep!r} is a note and cannot be a dependency"})
+            elif dep not in ids:
                 errors.append({"node": nid, "field": "after",
                                "msg": f"unknown dependency {dep!r}"})
             elif dep == nid:

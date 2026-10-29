@@ -95,6 +95,53 @@ def test_schedule_metadata_survives_into_the_plan():
     assert meta == {"mode": "schedule", "schedule": "0 9 * * *"}
 
 
+def test_notes_are_dropped_like_triggers():
+    """A sticky note is for the person reading the canvas, never for the runner."""
+    designer = {"name": "t", "nodes": [
+        {"id": "t1", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "note1", "type": "note", "text": "draft first, then gate", "x": 40, "y": 90},
+        {"id": "a", "type": "agent", "prompt": "p", "after": ["t1"]},
+    ]}
+    plan = build_run_plan(designer)
+    assert [s["id"] for s in plan["steps"]] == ["a"]
+    assert "note" not in json.dumps(plan)
+    assert "draft first" not in json.dumps(plan)
+
+
+def test_a_note_id_in_after_is_stripped_rather_than_breaking_the_order():
+    """Defensive: a hand-written JSON can name a note. It must not become a dependency."""
+    designer = {"name": "t", "nodes": [
+        {"id": "t1", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "note1", "type": "note", "text": "hi"},
+        {"id": "a", "type": "agent", "prompt": "p", "after": ["t1", "note1"]},
+    ]}
+    step = build_run_plan(designer)["steps"][0]
+    assert step["after"] == []
+
+
+def test_a_note_only_design_has_no_executable_steps():
+    designer = {"name": "t", "nodes": [
+        {"id": "t1", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "note1", "type": "note", "text": "thoughts"},
+    ]}
+    with pytest.raises(ValueError, match="no executable nodes"):
+        build_run_plan(designer)
+
+
+def test_converting_leaves_the_notes_where_they_were():
+    """Designer JSON is the saved artefact: position and text survive the conversion."""
+    designer = {"name": "t", "nodes": [
+        {"id": "t1", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "note1", "type": "note", "text": "mint condition", "color": "green",
+         "x": 128, "y": 64},
+        {"id": "a", "type": "agent", "prompt": "p", "after": ["t1"]},
+    ]}
+    build_run_plan(designer)
+    note = next(n for n in designer["nodes"] if n["id"] == "note1")
+    assert (note["text"], note["color"], note["x"], note["y"]) == (
+        "mint condition", "green", 128, 64)
+
+
 def test_approval_timeout_survives_into_the_plan():
     designer = {"name": "gated", "nodes": [
         {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},

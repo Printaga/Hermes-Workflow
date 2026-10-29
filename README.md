@@ -21,6 +21,21 @@ Designs live as plain JSON under `~/.hermes/workflow-designs/<name>.json`; run s
 Edges are `after: [<node-id>...]`: a node runs once all of its parents have run. Layout `x`/`y`
 is widget-only and never reaches the run plan.
 
+### Sticky notes
+
+A **note** (`{"id", "type": "note", "text", "x", "y", "color"}`) is a label for whoever reads
+the canvas — the "remember the dry tone here" kind of thing. It is deliberately *not* a sixth
+step kind:
+
+* it has no ports, so it takes no edges in either direction (the validator rejects an `after`
+  that names a note, and rejects an edge *to* one);
+* it is dropped by the converter exactly like a trigger, so the runner never sees it;
+* `color` is one of `yellow`, `blue`, `green`, `red` and defaults to yellow.
+
+Because it is not a step, a design of only a note is still invalid — a workflow needs exactly
+one trigger and at least one executable node. Use notes freely; they change nothing about how
+the workflow runs.
+
 ## Install
 
 ```bash

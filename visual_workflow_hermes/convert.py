@@ -6,6 +6,7 @@ functions, no I/O, no Hermes imports — unit-testable standalone.
 
 Mapping:
   trigger   -> dropped; recorded in plan["meta"]["trigger"]
+  note      -> dropped (annotation for the reader, never a run step)
   agent     -> {"kind": "agent", "prompt", ...passthrough profile/model/provider/schema/inputs/timeout}
   condition -> {"kind": "condition", "expression"}
   approval  -> {"kind": "approval", "question", "options"}
@@ -13,6 +14,8 @@ Mapping:
   layout x/y -> dropped (widget-only, preserved in the designer JSON)
 """
 from __future__ import annotations
+
+from .schema import NOTE_KIND
 
 
 def topological_order(steps: list[dict]) -> list[dict]:
@@ -41,13 +44,17 @@ def build_run_plan(designer: dict) -> dict:
     name = designer.get("name", "workflow")
     raw = [n for n in designer.get("nodes", []) if isinstance(n, dict)]
     trigger_ids = {n.get("id") for n in raw if n.get("type") == "trigger"}
+    # Notes are annotations: the validator refuses edges to them, and stripping the ids here
+    # too means a hand-written JSON can never turn a note into a phantom dependency.
+    note_ids = {n.get("id") for n in raw if n.get("type") == NOTE_KIND}
+    skipped_ids = trigger_ids | note_ids
     trig = next((n for n in raw if n.get("type") == "trigger"), {}) or {}
     steps: list[dict] = []
     for n in raw:
         kind = n.get("type")
-        if kind == "trigger":
+        if kind in ("trigger", NOTE_KIND):
             continue
-        after = [a for a in (n.get("after") or []) if a not in trigger_ids]
+        after = [a for a in (n.get("after") or []) if a not in skipped_ids]
         step: dict = {"id": n.get("id"), "kind": kind, "after": after}
         if kind == "agent":
             step["prompt"] = n.get("prompt", "")

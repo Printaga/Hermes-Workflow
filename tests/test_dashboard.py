@@ -511,8 +511,8 @@ def test_canvas_puts_node_creation_in_a_top_bar(entry):
     )
     assert "vw-palette" not in entry, "the left palette rail must be gone"
     kit = entry[entry.index('class="vw-kit"'):entry.index('class="vw-bar"')]
-    assert kit.count('data-kind="') == 5, "one button per node kind"
-    assert kit.count('class="ico"') == 5, "each button needs an icon next to its label"
+    assert kit.count('data-kind="') == 6, "five step kinds plus the sticky note"
+    assert kit.count('class="ico"') == 6, "each button needs an icon next to its label"
 
 
 def test_canvas_has_no_left_rail_and_the_shell_is_one_column(entry):
@@ -538,6 +538,23 @@ def test_canvas_fits_its_width_and_recomputes_on_resize(entry):
     assert "preserveAspectRatio" in entry
     assert "ResizeObserver" in entry, "opening a sidebar must re-fit, not clip"
     assert "fitLocked" in entry, "a drag must not rescale the sheet under the pointer"
+
+
+# ------------------------------------------------------------ sticky notes
+def test_dashboard_offers_sticky_notes_as_annotations(entry):
+    assert 'data-kind="note"' in entry
+    assert 'var NOTE = "note"' in entry
+    assert 'var KINDS = ["trigger", "agent", "condition", "approval", "output"]' in entry
+    assert "KINDS.concat([NOTE])" in entry
+    assert "NOTE_COLORS" in entry
+
+
+def test_a_note_has_no_ports_and_is_edited_as_free_text(entry):
+    assert "if (n.type !== NOTE) {" in entry
+    assert "a note cannot hold a workflow step" in entry
+    assert 'field("note text"' in entry
+    assert 'TIPS["note.color"]' in entry
+    assert 'n.type === "note" ? n.text || ""' in entry
 
 
 def test_nodes_are_compact_with_a_two_line_preview(entry):

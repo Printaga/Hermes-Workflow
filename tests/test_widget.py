@@ -162,8 +162,8 @@ def test_node_creation_is_a_top_bar_not_a_left_rail(html):
     assert html.index('id="kit"') < html.index('id="canvas"')
     assert 'id="palette"' not in html and "#palette" not in html
     kit = html[html.index('id="kit"'):html.index('id="bar"')]
-    assert kit.count('data-kind="') == 5
-    assert kit.count('class="ico"') == 5
+    assert kit.count('data-kind="') == 6, "five step kinds plus the sticky note"
+    assert kit.count('class="ico"') == 6
 
 
 def test_inspector_starts_collapsed_and_can_be_closed(html):
@@ -179,6 +179,37 @@ def test_canvas_fits_its_width_and_recomputes_on_resize(html):
     assert 'setAttribute("viewBox"' in html
     assert "ResizeObserver" in html
     assert "fitLocked" in html
+
+
+# ------------------------------------------------------------ sticky notes
+# A note is information for the person reading the canvas: it has no ports, never reaches
+# the run plan, and must never be asked for a trigger's fields.
+def test_sticky_notes_are_offered_but_are_not_step_kinds(html):
+    assert 'data-kind="note"' in html, "the palette must offer a sticky note"
+    assert 'var NOTE = "note"' in html
+    # The five runnable kinds stay their own list; the palette is that list plus the note.
+    assert 'var KINDS = ["trigger", "agent", "condition", "approval", "output"]' in html
+    assert "KINDS.concat([NOTE])" in html
+    assert "NOTE_COLORS" in html
+
+
+def test_a_note_has_no_ports_and_cannot_be_linked(html):
+    assert "if (n.type !== NOTE) {" in html, "a note draws no ports"
+    assert "a note cannot hold a workflow step" in html
+
+
+def test_a_note_is_edited_as_free_text_with_an_optional_colour(html):
+    assert 'field("note text"' in html
+    assert 'TIPS["note.color"]' in html
+    assert 'n.type === "note" ?' in html and 'n.text || ""' in html, (
+        "the node preview shows the note text"
+    )
+
+
+def test_the_widget_validator_ignores_notes_for_connectivity(html):
+    assert "function noteIds(" in html
+    assert "cannot be a dependency" in html
+    assert "a note takes no edges" in html
 
 
 def test_nodes_are_compact_with_a_two_line_preview(html):

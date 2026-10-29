@@ -23,8 +23,8 @@ SURFACES = {
     "widget": ROOT / "widgets" / "designer.html",
 }
 
-# The five node kinds the palette offers.
-KIND_KEYS = ("trigger", "agent", "condition", "approval", "output")
+# The five runnable node kinds plus the annotation-only sticky note.
+KIND_KEYS = ("trigger", "agent", "condition", "approval", "output", "note")
 
 # One key per inspector option. Names mirror the field the canvas writes (``<kind>.<field>``),
 # so a new option without a tip shows up here as a failure rather than as a silent gap.
@@ -47,6 +47,8 @@ OPTION_KEYS = (
     "output.deliver",
     "output.target",
     "output.target.custom",
+    "note.text",
+    "note.color",
 )
 
 REQUIRED = KIND_KEYS + OPTION_KEYS

@@ -58,6 +58,20 @@ def test_save_overwrites_same_name_only(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["demo.json"]
 
 
+def test_notes_keep_their_position_and_text_through_save_and_load(tmp_path):
+    """A sticky note is canvas state: the store must not normalise it away."""
+    s = DesignStore(root=tmp_path)
+    graph = _graph()
+    graph["nodes"].append({
+        "id": "note1", "type": "note", "text": "keep the tone dry",
+        "color": "blue", "x": 210, "y": 96,
+    })
+    s.save("demo", graph)
+    note = next(n for n in s.load("demo")["nodes"] if n["type"] == "note")
+    assert note == {"id": "note1", "type": "note", "text": "keep the tone dry",
+                    "color": "blue", "x": 210, "y": 96}
+
+
 # -- run history ------------------------------------------------------------
 def test_run_store_recent_is_newest_first_and_limited(tmp_path):
     import os
