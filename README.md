@@ -36,6 +36,30 @@ hermes plugins doctor .      # import + registration OK, 5 tools
 
 Requires Hermes >= 0.21 and Python >= 3.10. No third-party dependencies.
 
+### Desktop tab: it ships opt-in (one toggle)
+
+`desktop/plugin.js` is the Desktop-app half of this package. Hermes Desktop materializes it as
+`<hermes home>/desktop-plugins/visual-workflow/plugin.js` beside a `.hermes-package.json` marker, and
+the runtime loader treats **every marked folder as opt-in**: it publishes the row with
+`status: 'disabled'` and never calls `register()`, so neither the `/workflows` route nor the
+`Workflows` sidebar row exists yet (`apps/desktop/src/contrib/runtime-loader.ts`:
+`defaultEnabled: marker ? false : undefined`). A plugin cannot lift that cap itself — the loader
+ANDs the root posture with the plugin's own `defaultEnabled`.
+
+Turn it on once: **Settings → Capabilities → Plugins → Workflows → enable**. The choice persists in
+Desktop's plugin-decisions store, and the row then loads on every launch (the file is also
+fs-watched, so edits hot-reload).
+
+If the row is still missing after that, check in Desktop DevTools (View → Toggle Developer Tools) —
+the disabled path logs nothing, so the console is empty either way:
+
+```js
+JSON.parse(localStorage.getItem('hermes.desktop.pluginDecisions.v2') || '{}')['visual-workflow']
+// undefined => never enabled (the marker's opt-in posture is still in force); true => enabled
+document.querySelector('[data-tour="sidebar-nav-visual-workflow:workflows-nav"]')
+// null => register() never ran: no /workflows route, no sidebar row. Look for `[plugins]` errors
+```
+
 ## Use
 
 ```text
