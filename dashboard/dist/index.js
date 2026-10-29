@@ -8,6 +8,7 @@
  *
  * Backend is this plugin's own router at /api/plugins/visual-workflow/ (dashboard/plugin_api.py):
  *   GET  /designs                     saved design names
+ *   GET  /designs/templates           built-in designs shipped in examples/
  *   GET  /designs/{name}              one graph
  *   POST /designs/{name}              validate + save a graph
  *   POST /designs/{name}/validate     validate a saved design or a draft {"graph": ...}
@@ -82,6 +83,8 @@
     "note.color": "Tint for the sticky; it is a reading aid, not part of the run.",
     "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
     "bar.name": "Name this workflow is saved and run under.",
+    "bar.templates": "Start from a built-in workflow: it loads onto the canvas, and Save stores it under your own name.",
+    "bar.new": "Start from an empty canvas.",
     "bar.validate": "Check the graph without saving it.",
     "bar.save": "Validate and store the workflow.",
     "bar.run": "Save-free run now: advance until it finishes or pauses at a gate.",
@@ -1947,6 +1950,7 @@
     var hostRef = useRef(null);
     var designerRef = useRef(null);
     var [designs, setDesigns] = useState([]);
+    var [templates, setTemplates] = useState([]);
     var [active, setActive] = useState("");
     var [view, setView] = useState("designer");
     var [error, setError] = useState("");
@@ -1969,6 +1973,16 @@
       });
     }, []);
 
+    // Built-in starting points ship with the plugin; an empty list is honest (older install,
+    // or a stale copy) and the canvas then offers only a blank design.
+    var loadTemplates = useCallback(function () {
+      return fetchJSON(API + "/designs/templates").then(function (data) {
+        setTemplates((data && data.templates) || []);
+      }).catch(function () {
+        setTemplates([]);
+      });
+    }, []);
+
     // Delivery targets come from the host's own channel directory; a failure only means the
     // output node keeps its free-text field.
     var loadChannels = useCallback(function () {
@@ -1986,12 +2000,13 @@
         onSaved: refresh,
       });
       refresh();
+      loadTemplates();
       loadProfiles();
       loadChannels();
       return function () {
         designerRef.current = null;
       };
-    }, [refresh, loadProfiles, loadChannels]);
+    }, [refresh, loadTemplates, loadProfiles, loadChannels]);
 
     function open(name) {
       setActive(name);
@@ -2007,6 +2022,19 @@
       setActive("");
       setError("");
       if (designerRef.current) designerRef.current.newDesign("untitled");
+    }
+
+    // A template is a draft, not a saved design: it loads onto the canvas and the user saves it
+    // under their own name, so two people can start from "Review gate" without colliding.
+    function useTemplate(name) {
+      var row = null;
+      for (var i = 0; i < templates.length; i += 1) {
+        if (templates[i].name === name) row = templates[i];
+      }
+      if (!row) return;
+      setActive("");
+      setError("");
+      if (designerRef.current) designerRef.current.loadGraph(row.graph);
     }
 
     // One compact row instead of a 190px rail: at 760px of tab width every column the rail
@@ -2043,7 +2071,23 @@
         designs.map(function (name) {
           return h("option", { key: name, value: name }, name);
         })),
-      h("button", { key: "new", type: "button", className: "vw-pill", onClick: blank }, "New"),
+      h("select", {
+        key: "templates",
+        className: "vw-grow",
+        "aria-label": "start from a template",
+        title: TIPS["bar.templates"],
+        value: "",
+        disabled: !templates.length,
+        onChange: function (ev) { if (ev.target.value) useTemplate(ev.target.value); },
+      },
+        h("option", { key: "none", value: "" },
+          templates.length ? "\u2014 start from a template \u2014" : "no templates"),
+        templates.map(function (row) {
+          return h("option", { key: row.name, value: row.name, title: row.description },
+            row.title);
+        })),
+      h("button", { key: "new", type: "button", className: "vw-pill",
+        title: TIPS["bar.new"], onClick: blank }, "New"),
       error ? h("p", { key: "err", className: "vw-error" }, error) : null
     );
 

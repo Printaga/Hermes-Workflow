@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from visual_workflow_hermes.schema import validate_designer_graph
+
 ROOT = Path(__file__).resolve().parent.parent
 DASHBOARD = ROOT / "dashboard"
 MANIFEST = DASHBOARD / "manifest.json"
@@ -36,6 +38,8 @@ REQUIRED_ROUTES = {
     # Runs view: every run on disk (not just the one this tab started), and one run's detail.
     ("/runs", "get"),
     ("/runs/{run_id}", "get"),
+    # "New from template": the built-in designs shipped in examples/.
+    ("/designs/templates", "get"),
     # Schedules view: the delivery-target picker and the cron jobs this plugin created.
     ("/channels", "get"),
     ("/schedules", "get"),
@@ -173,6 +177,41 @@ def _client(tmp_path, monkeypatch):
     app = FastAPI()
     app.include_router(mod.router, prefix="/api/plugins/visual-workflow")
     return TestClient(app), mod
+
+
+def test_templates_route_is_declared_before_the_design_name_route():
+    """FastAPI matches in registration order: after ``/designs/{name}`` it is unreachable."""
+    source = API.read_text(encoding="utf-8")
+    templates = source.index('@router.get("/designs/templates")')
+    single = source.index('@router.get("/designs/{name}")')
+    assert templates < single
+
+
+def test_templates_endpoint_serves_every_shipped_example(tmp_path, monkeypatch):
+    """The picker's rows come from the files themselves, with the graph already inline."""
+    client, _ = _client(tmp_path, monkeypatch)
+    body = client.get("/api/plugins/visual-workflow/designs/templates").json()
+    rows = body["templates"]
+    names = [r["name"] for r in rows]
+    assert names == sorted(names)
+    shipped = sorted(p.name[: -len(".designer.json")]
+                     for p in (ROOT / "examples").glob("*.designer.json"))
+    assert names == shipped
+    assert {"daily-digest", "review-gate"} <= set(names)
+    for row in rows:
+        assert row["title"].strip() and row["description"].strip()
+        assert row["nodes"] == len(row["graph"]["nodes"])
+        # Named after the file, so "Save" writes a design the picker can list again.
+        assert row["graph"]["name"] == row["name"]
+        assert validate_designer_graph(row["graph"]) == [], row["name"]
+
+
+def test_a_design_literally_named_templates_is_not_shadowed(tmp_path, monkeypatch):
+    """Guard the ordering the hard way: a saved design called "templates" must not win."""
+    client, _ = _client(tmp_path, monkeypatch)
+    _save_gate_design(client, name="templates")
+    body = client.get("/api/plugins/visual-workflow/designs/templates").json()
+    assert "templates" in body and "graph" not in body
 
 
 def test_profiles_endpoint_answers_even_without_a_host_registry(tmp_path, monkeypatch):
@@ -513,6 +552,16 @@ def test_canvas_puts_node_creation_in_a_top_bar(entry):
     kit = entry[entry.index('class="vw-kit"'):entry.index('class="vw-bar"')]
     assert kit.count('data-kind="') == 6, "five step kinds plus the sticky note"
     assert kit.count('class="ico"') == 6, "each button needs an icon next to its label"
+
+
+def test_the_template_picker_sits_in_the_same_top_row(entry):
+    """"New" alone leaves a first-time user staring at an empty canvas."""
+    assert '"start from a template"' in entry
+    assert "/designs/templates" in entry
+    assert "function useTemplate(name)" in entry
+    # Chosen template is a draft on the canvas, never a saved design of someone else's.
+    body = entry.split("function useTemplate(name)", 1)[1][:400]
+    assert 'setActive("")' in body
 
 
 def test_canvas_has_no_left_rail_and_the_shell_is_one_column(entry):

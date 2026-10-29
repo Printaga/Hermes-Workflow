@@ -10,6 +10,7 @@ through ``POST /runs/{run_id}/respond``.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import uuid
@@ -138,6 +139,41 @@ def list_channels() -> dict:
 def list_designs() -> dict:
     """Names of the saved designs under ``$HERMES_HOME/workflow-designs``."""
     return {"designs": _designs().list_designs()}
+
+
+# Built-in starting points ship with the plugin, so "New" is not a blank canvas with nothing to
+# learn from. Read straight from ``examples/`` at request time: one file is the single source of
+# truth for the JSON, the template list, and the tests that validate every example.
+TEMPLATES_DIR = _PLUGIN_ROOT / "examples"
+_SUFFIX = ".designer.json"
+
+
+@router.get("/designs/templates")
+def list_templates() -> dict:
+    """Built-in designs from ``examples/*.designer.json``, ready to load into the canvas.
+
+    Declared BEFORE ``/designs/{name}`` on purpose: FastAPI matches in registration order, so a
+    later block here would be swallowed as a design literally named "templates". A file that is
+    unreadable or not a JSON object is skipped rather than failing the whole list, and an empty
+    list is an honest answer (the canvas then offers only a blank design).
+    """
+    rows: list[dict] = []
+    for path in sorted(TEMPLATES_DIR.glob(f"*{_SUFFIX}")):
+        try:
+            graph = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(graph, dict) or not isinstance(graph.get("nodes"), list):
+            continue
+        name = path.name[: -len(_SUFFIX)]
+        rows.append({
+            "name": name,
+            "title": str(graph.get("title") or name),
+            "description": str(graph.get("description") or ""),
+            "nodes": len(graph["nodes"]),
+            "graph": {**graph, "name": name},
+        })
+    return {"templates": rows}
 
 
 @router.get("/designs/{name}")

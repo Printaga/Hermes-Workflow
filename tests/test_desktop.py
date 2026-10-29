@@ -272,6 +272,15 @@ def test_saved_workflows_move_into_the_top_row(source):
     assert ".vw-rail{" not in source, "the 190px rail is what squeezed the canvas"
 
 
+def test_templates_load_from_the_same_top_row(source):
+    assert 'data-vw="templates"' in source
+    assert 'call("/designs/templates")' in source
+    assert "function renderTemplates()" in source
+    assert "function useTemplate(name)" in source
+    # A template loads as an unsaved draft, so Save writes it under the user's own name.
+    assert "active = \"\";" in source.split("function useTemplate(name)", 1)[1].split("}", 8)[0]
+
+
 def test_inspector_starts_collapsed_and_can_be_closed(source):
     assert 'class="vw-app vw-insp-collapsed"' in source
     assert 'data-vw="insp-toggle"' in source and 'aria-expanded="false"' in source

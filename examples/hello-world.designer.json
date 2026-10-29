@@ -1,5 +1,7 @@
 {
   "name": "hello-world",
+  "title": "Hello world",
+  "description": "The smallest useful workflow: one agent, one output. Start here.",
   "nodes": [
     {"id": "trigger1", "type": "trigger", "trigger_mode": "manual", "after": []},
     {"id": "writer", "type": "agent", "prompt": "Write a haiku about rivers.", "after": ["trigger1"]},

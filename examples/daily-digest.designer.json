@@ -1,0 +1,12 @@
+{
+  "name": "daily-digest",
+  "title": "Daily digest",
+  "description": "Every morning at 09:00 UTC, write a short digest and hand it on.",
+  "nodes": [
+    {"id": "trigger1", "type": "trigger", "trigger_mode": "schedule", "schedule": "0 9 * * *", "after": []},
+    {"id": "digest", "type": "agent", "retries": 1,
+     "prompt": "Write a five-bullet digest of what is worth knowing today. Be concrete, no preamble.",
+     "after": ["trigger1"]},
+    {"id": "out", "type": "output", "after": ["digest"]}
+  ]
+}

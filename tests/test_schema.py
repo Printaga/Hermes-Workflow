@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from visual_workflow_hermes.schema import validate_designer_graph
 
 EX = Path(__file__).parent.parent / "examples"
@@ -8,6 +10,24 @@ EX = Path(__file__).parent.parent / "examples"
 
 def _load(name):
     return json.loads((EX / name).read_text())
+
+
+def _examples():
+    return sorted(p.name for p in EX.glob("*.designer.json"))
+
+
+@pytest.mark.parametrize("filename", _examples())
+def test_every_example_is_a_valid_design(filename):
+    """Every shipped example is offered in the canvas, so all of them must actually run."""
+    assert validate_designer_graph(_load(filename)) == [], filename
+
+
+@pytest.mark.parametrize("filename", _examples())
+def test_every_example_is_described_for_the_template_picker(filename):
+    """The picker labels a template by ``title``/``description``; a nameless one is a dead row."""
+    graph = _load(filename)
+    assert str(graph.get("title") or "").strip(), f"{filename} needs a title"
+    assert str(graph.get("description") or "").strip(), f"{filename} needs a description"
 
 
 def test_hello_world_fixture_is_valid():

@@ -1,0 +1,17 @@
+{
+  "name": "review-gate",
+  "title": "Review gate",
+  "description": "Draft, then stop for a human decision before anything leaves the run. The gate expires after an hour.",
+  "nodes": [
+    {"id": "trigger1", "type": "trigger", "trigger_mode": "manual", "after": []},
+    {"id": "note1", "type": "note", "color": "yellow", "x": 24, "y": 16,
+     "text": "The gate auto-rejects after 60 minutes: no run waits forever for a reviewer."},
+    {"id": "draft", "type": "agent",
+     "prompt": "Write a 120-word announcement for the change described above.",
+     "after": ["trigger1"]},
+    {"id": "gate", "type": "approval", "question": "Publish this announcement?",
+     "options": ["approve", "revise"], "timeout_minutes": 60, "on_timeout": "reject",
+     "after": ["draft"]},
+    {"id": "out", "type": "output", "after": ["gate"]}
+  ]
+}

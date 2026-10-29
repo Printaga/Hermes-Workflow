@@ -15,6 +15,7 @@
  * this package's own router (dashboard/plugin_api.py) reached ONLY through `ctx.rest`, which the
  * host scopes to /api/plugins/visual-workflow and authenticates itself — no fetch, no tokens:
  *   GET  /designs                     saved design names
+ *   GET  /designs/templates           built-in designs shipped in examples/
  *   GET  /designs/{name}              one graph
  *   POST /designs/{name}              validate + save a graph
  *   POST /designs/{name}/validate     validate a saved design or a draft {"graph": ...}
@@ -65,6 +66,8 @@ const TIPS = {
     "note.color": "Tint for the sticky; it is a reading aid, not part of the run.",
   "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
   "bar.name": "Name this workflow is saved and run under.",
+  "bar.templates": "Start from a built-in workflow: it loads onto the canvas, and Save stores it under your own name.",
+  "bar.new": "Start from an empty canvas.",
   "bar.validate": "Check the graph without saving it.",
   "bar.save": "Validate and store the workflow.",
   "bar.run": "Run it now: advance until it finishes or pauses at a gate.",
@@ -315,6 +318,7 @@ const TEMPLATE =
   '      <button class="vw-pill" type="button" data-vw="view-schedules" aria-pressed="false">Schedules</button>' +
   "    </div>" +
   '    <select class="vw-grow" data-vw="designs" aria-label="saved workflows"></select>' +
+  '    <select class="vw-grow" data-vw="templates" aria-label="start from a template"></select>' +
   '    <button class="vw-pill" type="button" data-vw="new">New</button>' +
   '    <p class="vw-error" data-vw="rail-error"></p>' +
   "  </div>" +
@@ -416,6 +420,7 @@ function createDesigner(host, call) {
     sched: q('[data-vw="sched"]'),
     runs: q('[data-vw="runs"]'),
     designs: q('[data-vw="designs"]'),
+    templates: q('[data-vw="templates"]'),
     railError: q('[data-vw="rail-error"]'),
     name: q('[data-vw="name"]'),
     canvas: q('[data-vw="canvas"]'),
@@ -429,6 +434,7 @@ function createDesigner(host, call) {
 
   let graph = clone(BLANK);
   let designs = [];
+  let templates = [];  // built-in starting points shipped in examples/
   let active = "";
   let selected = null;
   let selectedEdge = null;
@@ -1757,6 +1763,48 @@ function createDesigner(host, call) {
     });
   }
 
+  /** Built-ins ship with the plugin; an empty list means an older copy, not a broken tab. */
+  function refreshTemplates() {
+    return call("/designs/templates").then((data) => {
+      templates = (data && data.templates) || [];
+      renderTemplates();
+    }).catch(() => {
+      templates = [];
+      renderTemplates();
+    });
+  }
+
+  function renderTemplates() {
+    const box = el.templates;
+    box.textContent = "";
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = templates.length
+      ? "\u2014 start from a template \u2014"
+      : "no templates";
+    box.appendChild(blank);
+    templates.forEach((row) => {
+      const option = document.createElement("option");
+      option.value = row.name;
+      option.textContent = row.title;
+      option.title = row.description;
+      box.appendChild(option);
+    });
+    box.disabled = !templates.length;
+    box.value = "";
+  }
+
+  // A template is a draft, not a saved design: load it onto the canvas and let the user save it
+  // under their own name.
+  function useTemplate(name) {
+    const row = templates.filter((t) => t.name === name)[0];
+    if (!row) return;
+    active = "";
+    el.railError.textContent = "";
+    loadGraph(clone(row.graph));
+    renderDesigns();
+  }
+
   function open(name) {
     call(designPath(name)).then((data) => {
       active = name;
@@ -2007,6 +2055,11 @@ function createDesigner(host, call) {
     el.designs.addEventListener("change", () => {
       if (el.designs.value) open(el.designs.value);
     });
+    el.templates.title = TIPS["bar.templates"];
+    el.templates.addEventListener("change", () => {
+      if (el.templates.value) useTemplate(el.templates.value);
+    });
+    q('[data-vw="new"]').title = TIPS["bar.new"];
     q('[data-vw="new"]').addEventListener("click", () => {
       active = "";
       el.railError.textContent = "";
@@ -2067,7 +2120,9 @@ function createDesigner(host, call) {
   buildInspector();
   draw();
   renderDesigns();
+  renderTemplates();
   refreshDesigns();
+  refreshTemplates();
   refreshProfiles();
   refreshChannels();
 

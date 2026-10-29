@@ -142,6 +142,24 @@ def test_converting_leaves_the_notes_where_they_were():
         "mint condition", "green", 128, 64)
 
 
+def test_daily_digest_template_runs_on_its_schedule():
+    plan = build_run_plan(_load("daily-digest.designer.json"))
+    assert [s["id"] for s in plan["steps"]] == ["digest", "out"]
+    assert plan["meta"]["trigger"] == {"mode": "schedule", "schedule": "0 9 * * *"}
+    assert plan["steps"][0]["retries"] == 1
+
+
+def test_review_gate_template_keeps_its_note_out_of_the_plan():
+    """The shipped templates are the first designs a user opens; they must convert cleanly."""
+    plan = build_run_plan(_load("review-gate.designer.json"))
+    by_id = {s["id"]: s for s in plan["steps"]}
+    assert set(by_id) == {"draft", "gate", "out"}
+    assert by_id["gate"]["options"] == ["approve", "revise"]
+    assert by_id["gate"]["timeout_minutes"] == 60
+    assert by_id["gate"]["on_timeout"] == "reject"
+    assert "note1" not in json.dumps(plan)
+
+
 def test_agent_retries_survive_into_the_plan():
     designer = {"name": "r", "nodes": [
         {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},

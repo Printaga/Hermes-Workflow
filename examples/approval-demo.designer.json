@@ -1,5 +1,7 @@
 {
   "name": "approval-demo",
+  "title": "Draft, check, approve",
+  "description": "All five node kinds: a condition filters a short draft, a human gate decides.",
   "nodes": [
     {"id": "trigger1", "type": "trigger", "trigger_mode": "manual", "after": []},
     {"id": "draft", "type": "agent", "prompt": "Draft a release note.", "after": ["trigger1"]},
