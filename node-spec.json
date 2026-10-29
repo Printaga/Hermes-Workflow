@@ -1,0 +1,156 @@
+{
+  "$comment": "One hand-written description of what a canvas may offer. tests/test_node_spec.py holds schema.py and all three canvases to it: the point is to fail loudly on the next drift, not to generate the UIs. `tip` (and each `tips` extra) is the canvas tooltip key (TIPS[...]) that must exist in dashboard/dist/index.js, desktop/plugin.js and widgets/designer.html; `required` mirrors schema.REQUIRED_FIELDS. Fields the validator accepts but no canvas edits (agent `schema`/`inputs`/`timeout`) are deliberately absent.",
+  "kinds": [
+    {
+      "kind": "trigger",
+      "required": [
+        "trigger_mode"
+      ],
+      "fields": [
+        {
+          "name": "trigger_mode",
+          "type": "enum",
+          "tip": "trigger.trigger_mode"
+        },
+        {
+          "name": "schedule",
+          "type": "cron",
+          "tip": "trigger.schedule"
+        }
+      ],
+      "tips": []
+    },
+    {
+      "kind": "agent",
+      "required": [
+        "prompt"
+      ],
+      "fields": [
+        {
+          "name": "prompt",
+          "type": "text",
+          "tip": "agent.prompt"
+        },
+        {
+          "name": "profile",
+          "type": "text",
+          "tip": "agent.profile"
+        },
+        {
+          "name": "model",
+          "type": "text",
+          "tip": "agent.model"
+        },
+        {
+          "name": "provider",
+          "type": "text",
+          "tip": "agent.provider"
+        },
+        {
+          "name": "retries",
+          "type": "int",
+          "tip": "agent.retries"
+        }
+      ],
+      "tips": []
+    },
+    {
+      "kind": "condition",
+      "required": [
+        "expression"
+      ],
+      "fields": [
+        {
+          "name": "expression",
+          "type": "expression",
+          "tip": "condition.expression"
+        }
+      ],
+      "tips": []
+    },
+    {
+      "kind": "approval",
+      "required": [
+        "question"
+      ],
+      "fields": [
+        {
+          "name": "question",
+          "type": "text",
+          "tip": "approval.question"
+        },
+        {
+          "name": "options",
+          "type": "list",
+          "tip": "approval.options"
+        },
+        {
+          "name": "timeout_minutes",
+          "type": "int",
+          "tip": "approval.timeout"
+        },
+        {
+          "name": "on_timeout",
+          "type": "enum",
+          "tip": "approval.on_timeout"
+        }
+      ],
+      "tips": []
+    },
+    {
+      "kind": "output",
+      "required": [],
+      "fields": [
+        {
+          "name": "deliver",
+          "type": "enum",
+          "tip": "output.deliver"
+        },
+        {
+          "name": "target",
+          "type": "text",
+          "tip": "output.target"
+        }
+      ],
+      "tips": [
+        "output.parents"
+      ]
+    },
+    {
+      "kind": "note",
+      "required": [],
+      "fields": [
+        {
+          "name": "text",
+          "type": "text",
+          "tip": "note.text"
+        },
+        {
+          "name": "color",
+          "type": "enum",
+          "tip": "note.color"
+        }
+      ],
+      "tips": []
+    }
+  ],
+  "trigger_modes": [
+    "manual",
+    "schedule"
+  ],
+  "deliver_modes": [
+    "notification",
+    "channel"
+  ],
+  "note_colors": [
+    "yellow",
+    "blue",
+    "green",
+    "red"
+  ],
+  "limits": {
+    "max_nodes": 50,
+    "max_retries": 3,
+    "max_timeout_minutes": 4320
+  }
+}
