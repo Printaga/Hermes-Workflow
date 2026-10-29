@@ -35,6 +35,9 @@ REQUIRED_ROUTES = {
     ("/runs/{run_id}/respond", "post"),
 }
 SAVE_ROUTE = ("/designs/{name}", "post")
+# The agent-node picker lists host profiles; the canvas falls back to a text field when the
+# host registry is unreadable, so this route answers 200 with an empty list rather than 500.
+PROFILES_ROUTE = ("/profiles", "get")
 
 
 @pytest.fixture(scope="module")
@@ -102,6 +105,7 @@ def test_router_declares_the_dashboard_routes():
     missing = REQUIRED_ROUTES - routes
     assert not missing, f"plugin_api.py is missing routes: {sorted(missing)}"
     assert SAVE_ROUTE in routes
+    assert PROFILES_ROUTE in routes
 
 
 def test_router_is_a_module_level_apirouter():
@@ -140,8 +144,105 @@ def test_router_imports_exactly_as_the_host_does():
         for route in mod.router.routes
         for method in (route.methods or set())
     }
-    missing = REQUIRED_ROUTES - served
+    missing = (REQUIRED_ROUTES | {PROFILES_ROUTE}) - served
     assert not missing, f"router does not serve: {sorted(missing)}"
+
+
+# ------------------------------------------------------------- live requests
+def _client(tmp_path, monkeypatch):
+    """Mount the plugin router the way the host does, against a throwaway HOME."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    import importlib.util
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    spec = importlib.util.spec_from_file_location("hermes_dashboard_plugin_visual-workflow", API)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    app = FastAPI()
+    app.include_router(mod.router, prefix="/api/plugins/visual-workflow")
+    return TestClient(app), mod
+
+
+def test_profiles_endpoint_answers_even_without_a_host_registry(tmp_path, monkeypatch):
+    """No host package here, so the honest answer is an empty list and available=false."""
+    client, _ = _client(tmp_path, monkeypatch)
+    response = client.get("/api/plugins/visual-workflow/profiles")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["profiles"] == [] and body["available"] is False
+
+
+def test_profiles_endpoint_lists_the_hosts_profiles(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    client, _ = _client(tmp_path, monkeypatch)
+
+    class Info:
+        name = "writer"
+        model = "claude"
+        provider = "anthropic"
+        is_default = False
+        bot_title = "Writer bot"
+        display_name = ""
+        description = "drafts"
+
+    mod = types.ModuleType("hermes_cli.profiles")
+    mod.list_profiles = lambda **kwargs: [Info()]
+    monkeypatch.setitem(sys.modules, "hermes_cli", types.ModuleType("hermes_cli"))
+    monkeypatch.setitem(sys.modules, "hermes_cli.profiles", mod)
+
+    body = client.get("/api/plugins/visual-workflow/profiles").json()
+    assert body["available"] is True
+    assert body["profiles"] == [{
+        "name": "writer", "label": "Writer bot", "model": "claude",
+        "provider": "anthropic", "is_default": False, "description": "drafts",
+    }]
+
+
+def test_run_through_the_router_returns_the_delivery_record(tmp_path, monkeypatch):
+    """A delivering output is recorded on the run; a failed send does not fail the run."""
+    from visual_workflow_hermes import delivery
+
+    client, _ = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        delivery, "send_text",
+        lambda target, text: {"target": target, "ok": False, "detail": "no token"},
+    )
+    graph = {
+        "name": "delivers",
+        "nodes": [
+            {"id": "trigger1", "type": "trigger", "trigger_mode": "manual", "after": []},
+            {"id": "note", "type": "agent", "prompt": "say hi", "after": ["trigger1"]},
+        ],
+    }
+    assert client.post("/api/plugins/visual-workflow/designs/delivers",
+                       json={"graph": graph}).json()["ok"] is True
+
+    first = client.post("/api/plugins/visual-workflow/designs/delivers/run").json()
+    assert first["status"] == "awaiting_agent"
+
+    graph["nodes"].append({
+        "id": "out", "type": "output", "after": ["note"],
+        "deliver": "notification", "target": "telegram",
+    })
+    assert client.post("/api/plugins/visual-workflow/designs/delivers",
+                       json={"graph": graph}).json()["ok"] is True
+
+    run = client.post("/api/plugins/visual-workflow/designs/delivers/run").json()
+    run_id, node_id = run["run_id"], run["pending"]["node_id"]
+    done = client.post(
+        f"/api/plugins/visual-workflow/runs/{run_id}/respond",
+        json={"run_id": run_id, "node_id": node_id, "answer": "hi"},
+    ).json()
+    assert done["status"] == "done"
+    (record,) = done["deliveries"]
+    assert record["node_id"] == "out" and record["ok"] is False
+    assert record["target"] == "telegram"
 
 
 # ------------------------------------------------------------------------ entry
@@ -226,6 +327,32 @@ def test_entry_svg_helper_routes_var_paints_through_inline_style(entry):
     assert body.index("style.setProperty") < body.index("setAttribute"), (
         "setAttribute must be the else-branch for plain values only"
     )
+
+
+def test_entry_canvas_has_ports_and_cuttable_edges(entry):
+    """Click-two-nodes-then-Connect was unusable; the canvas drags port to port."""
+    assert "function outPort(n)" in entry and "function inPort(n)" in entry
+    assert "function edgePath(parent, child)" in entry
+    assert entry.count('"data-port"') >= 2
+    assert 'n.type !== "trigger"' in entry, "a trigger has no input port"
+    assert "\"vw-edge-hit\"" in entry
+    assert "function beginLink(" in entry and "function finishLink(" in entry
+    assert "function cutEdge(" in entry and "selectedEdge" in entry
+
+
+def test_entry_lists_profiles_for_the_agent_picker(entry):
+    assert 'API + "/profiles"' in entry
+    assert "function profileSelect(" in entry
+    assert "profile / bot" in entry
+    assert "setProfiles" in entry
+
+
+def test_entry_offers_and_reports_output_delivery(entry):
+    assert 'field("deliver"' in entry
+    assert '"notification"' in entry and '"channel"' in entry
+    assert 'field("target"' in entry
+    assert "function deliveryLine(" in entry
+    assert "result.deliveries" in entry
 
 
 def test_entry_uses_only_scoped_readable_tokens(entry):

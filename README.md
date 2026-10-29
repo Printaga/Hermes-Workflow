@@ -13,10 +13,10 @@ Designs live as plain JSON under `~/.hermes/workflow-designs/<name>.json`; run s
 | Kind | Fields | Run-plan mapping |
 | --- | --- | --- |
 | `trigger` | `trigger_mode` (`manual`/`schedule`/`webhook`), `schedule` cron, `webhook_path` | Not a step: recorded in `plan["meta"]["trigger"]`. Exactly one per design. |
-| `agent` | `prompt` (required), `model`, `provider`, `schema`, `inputs`, `timeout` | A step that runs an agent. Without a subagent backend it pauses as `awaiting_agent` with `pending.prompt`. |
+| `agent` | `prompt` (required), `profile`, `model`, `provider`, `schema`, `inputs`, `timeout` | A step that runs an agent. `profile` picks a host bot; its model/provider apply unless the node overrides them. Without a subagent backend it pauses as `awaiting_agent` with `pending.prompt`. |
 | `condition` | `expression` (required) — `out.<node>.<field> <op> <value>` | Evaluated locally against upstream outputs; a false gate skips its downstream subtree (reported in `skipped`). |
 | `approval` | `question` (required), `options`, `context` | Pauses the run as `awaiting_approval` until `workflow_design_respond` answers it. |
-| `output` | — | Collects its parents' outputs under `outputs`. |
+| `output` | `deliver` (`notification`/`channel`), `target` | Collects its parents' outputs under `outputs`, then optionally sends that text through the host send seam. `notification` targets a platform's home channel (`telegram`); `channel` needs `<platform>:<chat id>` (`slack:#ops`). A failed send is recorded in `deliveries`, never fails the run. |
 
 Edges are `after: [<node-id>...]`: a node runs once all of its parents have run. Layout `x`/`y`
 is widget-only and never reaches the run plan.
@@ -78,8 +78,11 @@ The designer itself is one static file:
 ::preview{file="/path/to/Hermes-Workflow/widgets/designer.html"}
 ```
 
-Click a node kind in the palette (or drag it onto the canvas), drag nodes to arrange them,
-click two nodes and **Connect** to add an edge, and **Delete** to remove the selection. The
+Click a node kind in the palette (or drag it onto the canvas) and drag nodes to arrange them.
+Every node carries an output port on its right edge and an input port on its left (all but a
+trigger, which can have no parents): drag from the output port to another node to add an edge.
+Click an edge and press **Delete** (or double-click it) to cut it; edges that would close a
+loop are refused before they exist. The
 inspector edits the selected node; **Validate** runs the same rules as the Python validator;
 **Copy JSON** produces the text for `/workflow save`; **Save to Hermes** sends that command
 straight to chat when the host exposes `window.hermes.send`, and copies it otherwise.

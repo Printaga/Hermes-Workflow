@@ -48,6 +48,17 @@
   #canvas { display: block; }
   #canvas .node { cursor: grab; }
   #canvas .node:active { cursor: grabbing; }
+  #canvas .port {
+    fill: var(--card, #1e1e1e); stroke: var(--border, #3a3a3a);
+    stroke-width: 1.5; cursor: crosshair;
+  }
+  #canvas .port:hover { fill: var(--accent, #6ea8fe); stroke: var(--accent, #6ea8fe); }
+  #canvas .edge { fill: none; stroke: var(--border, #3a3a3a); stroke-width: 1.6; }
+  #canvas .edge-on { stroke: var(--accent, #6ea8fe); stroke-width: 2.4; }
+  #canvas .edge-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
+  #canvas .ghost {
+    fill: none; stroke: var(--accent, #6ea8fe); stroke-width: 1.6; stroke-dasharray: 4 3;
+  }
 </style>
 </head>
 <body>
@@ -68,7 +79,7 @@
       <button class="pill" type="button" draggable="true" data-kind="condition">Condition</button>
       <button class="pill" type="button" draggable="true" data-kind="approval">Approval</button>
       <button class="pill" type="button" draggable="true" data-kind="output">Output</button>
-      <p class="hint">Click two nodes, then Connect.<br>Delete removes the selection.</p>
+      <p class="hint">Drag from a node&rsquo;s right port to another node&rsquo;s left port.<br>Click an edge, then Delete, to cut it.</p>
     </div>
     <div id="canvaswrap">
       <svg id="canvas" width="900" height="560" role="img" aria-label="workflow canvas"></svg>
@@ -95,6 +106,22 @@
   var MODES = ["manual", "schedule", "webhook"];
   var MAX_NODES = 50;
   var NODE_W = 168, NODE_H = 56;
+  var PORT_R = 5;
+
+  // ---- edge geometry (identical in widgets/designer.html, dashboard/dist/index.js and
+  // desktop/plugin.js: no build step, so the block is copied rather than imported).
+  // Every node has an OUTPUT port on its right edge and — except a trigger, which can have
+  // no parents — an INPUT port on its left edge. An edge runs from the parent's output port
+  // to the child's input port, so the curve reads as a direction.
+  function outPort(n) { return { x: n.x + NODE_W, y: n.y + NODE_H / 2 }; }
+  function inPort(n) { return { x: n.x, y: n.y + NODE_H / 2 }; }
+  function edgeKey(from, to) { return from + ">" + to; }
+  function edgePath(parent, child) {
+    var p = outPort(parent), q = inPort(child);
+    var bend = Math.max(30, Math.abs(q.x - p.x) / 2);
+    return "M" + p.x + "," + p.y +
+      "C" + (p.x + bend) + "," + p.y + " " + (q.x - bend) + "," + q.y + " " + q.x + "," + q.y;
+  }
   var REQUIRED = {
     trigger: ["trigger_mode"], agent: ["prompt"], condition: ["expression"],
     approval: ["question"], output: []
@@ -103,7 +130,11 @@
 
   var graph = clone(DEFAULT_GRAPH);
   var selected = null;
+  var selectedEdge = null;
   var linkQueue = [];
+  var linkArm = null;   // source node id after a click on an output port
+  var dragLink = null;  // live drag from an output port: {from, x1, y1, x2, y2}
+  var profiles = [];    // host profiles ("bots") offered to agent nodes
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
   function node(id) { return graph.nodes.filter(function (n) { return n.id === id; })[0] || null; }
@@ -246,13 +277,36 @@
       (n.after || []).forEach(function (dep) {
         var parent = byId[dep];
         if (!parent) { return; }
-        svg.appendChild(svgEl("line", {
-          x1: parent.x + NODE_W / 2, y1: parent.y + NODE_H / 2,
-          x2: n.x + NODE_W / 2, y2: n.y + NODE_H / 2,
-          stroke: "var(--border)", "stroke-width": 1.5
-        }));
+        var d = edgePath(parent, n);
+        var on = selectedEdge === edgeKey(parent.id, n.id);
+        var path = svgEl("path", { d: d, "class": on ? "edge edge-on" : "edge" });
+        // A 1.6px stroke is nearly impossible to hit; the transparent twin is the target.
+        var hit = svgEl("path", { d: d, "class": "edge-hit" });
+        hit.setAttribute("data-edge", edgeKey(parent.id, n.id));
+        function selectEdge(ev) {
+          ev.stopPropagation();
+          selectedEdge = edgeKey(parent.id, n.id);
+          selected = null;
+          buildInspector();
+          draw();
+        }
+        path.addEventListener("click", selectEdge);
+        hit.addEventListener("click", selectEdge);
+        hit.addEventListener("dblclick", function (ev) {
+          ev.stopPropagation();
+          cutEdge(parent.id, n.id);
+        });
+        svg.appendChild(path);
+        svg.appendChild(hit);
       });
     });
+
+    if (dragLink) {
+      svg.appendChild(svgEl("path", {
+        d: "M" + dragLink.x1 + "," + dragLink.y1 + "L" + dragLink.x2 + "," + dragLink.y2,
+        "class": "ghost"
+      }));
+    }
 
     graph.nodes.forEach(function (n) {
       var isSelected = n.id === selected;
@@ -272,6 +326,35 @@
       var sub = svgEl("text", { x: 10, y: 46, "font-size": 10, fill: "var(--muted-foreground)" });
       sub.textContent = preview(n);
       g.appendChild(kind); g.appendChild(id); g.appendChild(sub);
+
+      var out = svgEl("circle", {
+        cx: NODE_W, cy: NODE_H / 2, r: PORT_R, "class": "port"
+      });
+      out.setAttribute("data-port", "out");
+      out.setAttribute("data-id", n.id);
+      out.addEventListener("mousedown", function (ev) {
+        // The port owns the gesture; without this the node drag starts instead.
+        ev.stopPropagation();
+        ev.preventDefault();
+        beginLink(n, ev);
+      });
+      g.appendChild(out);
+
+      if (n.type !== "trigger") {
+        var inp = svgEl("circle", {
+          cx: 0, cy: NODE_H / 2, r: PORT_R, "class": "port"
+        });
+        inp.setAttribute("data-port", "in");
+        inp.setAttribute("data-id", n.id);
+        inp.addEventListener("mousedown", function (ev) {
+          ev.stopPropagation();
+          ev.preventDefault();
+          if (linkArm) { finishLink(linkArm, n.id); }
+          else { note("Drag from the right port of the parent node to here."); }
+        });
+        g.appendChild(inp);
+      }
+
       wireNode(g, n);
       svg.appendChild(g);
     });
@@ -288,6 +371,9 @@
   function wireNode(g, n) {
     g.addEventListener("mousedown", function (ev) {
       if (ev.button !== 0) { return; }
+      // A port handler already claimed this press (stopPropagation also covers it, but a port
+      // inside a child <g> must never drag the node).
+      if (ev.target && ev.target.getAttribute && ev.target.getAttribute("data-port")) { return; }
       ev.preventDefault();
       var start = svgPoint(ev);
       var offset = { x: start.x - n.x, y: start.y - n.y };
@@ -312,6 +398,7 @@
   // ------------------------------------------------------------- selection
   function pick(id) {
     selected = id;
+    selectedEdge = null;
     // The queue is "the two most recently clicked nodes", parent first. Clicking a node
     // again must not drop it (that would make click-click-Connect impossible).
     linkQueue = linkQueue.filter(function (x) { return x !== id; }).concat([id]).slice(-2);
@@ -319,18 +406,126 @@
     draw();
   }
 
+  /** The node under a canvas point, by geometry (DOM hit-testing would trip over the edge
+   *  hit-areas and the drag ghost stacked above the node). */
+  function nodeIdAtPoint(p) {
+    var PAD = 6;
+    for (var i = graph.nodes.length - 1; i >= 0; i -= 1) {
+      var n = graph.nodes[i];
+      if (p.x >= n.x - PAD && p.x <= n.x + NODE_W + PAD &&
+          p.y >= n.y - PAD && p.y <= n.y + NODE_H + PAD) { return n.id; }
+    }
+    return null;
+  }
+
+  /** Would making *to* depend on *from* close a loop? Walk up from *from*. */
+  function createsCycle(from, to) {
+    var seen = {}, stack = [from];
+    while (stack.length) {
+      var id = stack.pop();
+      if (id === to) { return true; }
+      if (seen[id]) { continue; }
+      seen[id] = 1;
+      var n = node(id);
+      if (n) { stack = stack.concat(n.after || []); }
+    }
+    return false;
+  }
+
+  /** Drag started on *n*'s output port: follow the pointer, connect on release. */
+  function beginLink(n, ev) {
+    var start = svgPoint(ev), origin = outPort(n), moved = false;
+    linkArm = null;
+    dragLink = { from: n.id, x1: origin.x, y1: origin.y, x2: start.x, y2: start.y };
+    draw();
+    function onMove(moveEv) {
+      var p = svgPoint(moveEv);
+      if (Math.abs(p.x - start.x) > 3 || Math.abs(p.y - start.y) > 3) { moved = true; }
+      dragLink.x2 = p.x;
+      dragLink.y2 = p.y;
+      draw();
+    }
+    function onUp(upEv) {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      var from = dragLink.from;
+      dragLink = null;
+      if (moved) {
+        var targetId = nodeIdAtPoint(svgPoint(upEv));
+        if (targetId && targetId !== from) { finishLink(from, targetId); }
+        else { note(""); draw(); }
+        return;
+      }
+      // A click (no drag) arms the port, so the next input-port click completes it.
+      linkArm = from;
+      note("Now click the input port of the node that should run after " + from + ".");
+      draw();
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  /** Add the *from* -> *to* edge, refusing the three ways it could be wrong. */
+  function finishLink(from, to) {
+    linkArm = null;
+    var source = node(from), target = node(to);
+    if (!source || !target) { return; }
+    if (target.type === "trigger") {
+      note("a trigger cannot have parents");
+    } else if (from === to) {
+      note("a node cannot depend on itself");
+    } else if (createsCycle(from, to)) {
+      note("that edge would close a loop");
+    } else {
+      target.after = target.after || [];
+      if (target.after.indexOf(from) >= 0) { note(from + " already feeds " + to); }
+      else { target.after.push(from); note(from + " → " + to); }
+    }
+    selectedEdge = null;
+    draw();
+    buildInspector();
+  }
+
+  function cutEdge(from, to) {
+    var target = node(to);
+    if (target) {
+      target.after = (target.after || []).filter(function (dep) { return dep !== from; });
+    }
+    selectedEdge = null;
+    note("cut " + from + " → " + to);
+    draw();
+    buildInspector();
+  }
+
+  /** Delete the selected edge, else the selected node and every edge touching it. */
+  function removeSelected() {
+    if (selectedEdge) {
+      var parts = selectedEdge.split(">");
+      cutEdge(parts[0], parts[1]);
+      return true;
+    }
+    if (!selected) { return false; }
+    var removed = selected;
+    graph.nodes = graph.nodes.filter(function (n) { return n.id !== removed; });
+    graph.nodes.forEach(function (n) {
+      n.after = (n.after || []).filter(function (dep) { return dep !== removed; });
+    });
+    selected = null;
+    selectedEdge = null;
+    linkQueue = [];
+    linkArm = null;
+    buildInspector();
+    draw();
+    note("removed " + removed);
+    return true;
+  }
+
   function connect() {
     if (linkQueue.length < 2) {
-      note("Click two nodes on the canvas, then Connect.");
+      note("Drag from a node's right port to another node's left port.");
       return;
     }
-    var from = linkQueue[0], to = linkQueue[1];
-    var target = node(to);
-    if (!target) { return; }
-    target.after = target.after || [];
-    if (target.after.indexOf(from) < 0) { target.after.push(from); }
-    note("");
-    draw();
+    finishLink(linkQueue[0], linkQueue[1]);
   }
 
   // ------------------------------------------------------------- inspector
@@ -359,6 +554,61 @@
     area.value = value || "";
     area.addEventListener("input", function () { onInput(area.value); });
     return area;
+  }
+
+  /** Host profiles as ``[{name, label, model, provider}]``; empty when the page cannot reach
+   *  the plugin API (a bare file:// preview), in which case the picker is a text field. */
+  function profileByName(name) {
+    if (!name) { return null; }
+    var hits = profiles.filter(function (p) { return p.name === name; });
+    return hits[0] || null;
+  }
+
+  function profileControl(current) {
+    if (!profiles.length) {
+      return textInput(current.profile || "", function (v) {
+        if (v) { current.profile = v; } else { delete current.profile; }
+        draw();
+      }, "profile / bot id (optional)");
+    }
+    var select = document.createElement("select");
+    var blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "— host default —";
+    select.appendChild(blank);
+    var known = false;
+    profiles.forEach(function (p) {
+      var option = document.createElement("option");
+      option.value = p.name;
+      option.textContent = p.label && p.label !== p.name ? p.label + " (" + p.name + ")" : p.name;
+      if (p.name === current.profile) { option.selected = true; known = true; }
+      select.appendChild(option);
+    });
+    if (current.profile && !known) {
+      var stale = document.createElement("option");
+      stale.value = current.profile;
+      stale.textContent = current.profile + " (not found)";
+      stale.selected = true;
+      select.appendChild(stale);
+    }
+    select.addEventListener("change", function () {
+      if (select.value) { current.profile = select.value; } else { delete current.profile; }
+      buildInspector();
+      draw();
+    });
+    return select;
+  }
+
+  /** Best-effort profile list: same-origin when the page is served by Hermes, empty otherwise. */
+  function refreshProfiles() {
+    if (!window.fetch) { return; }
+    window.fetch("/api/plugins/visual-workflow/profiles", { credentials: "same-origin" })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) {
+        profiles = (data && data.profiles) || [];
+        buildInspector();
+      })
+      .catch(function () { profiles = []; });
   }
 
   function buildInspector() {
@@ -401,6 +651,16 @@
       box.appendChild(field("prompt", textArea(current.prompt || "", function (v) {
         current.prompt = v; draw();
       }, 5)));
+      box.appendChild(field("profile / bot (optional)", profileControl(current)));
+      var chosen = profileByName(current.profile);
+      if (chosen) {
+        var runs = document.createElement("p");
+        runs.className = "hint";
+        runs.textContent = "runs as " + (chosen.label || chosen.name) +
+          (chosen.model ? " · " + chosen.model : "") +
+          (chosen.provider ? " / " + chosen.provider : "");
+        box.appendChild(runs);
+      }
       box.appendChild(field("model (optional)", textInput(current.model || "", function (v) {
         current.model = v;
       })));
@@ -433,6 +693,31 @@
         ? (current.after || []).join(", ")
         : "(no parents — this output collects nothing)";
       box.appendChild(field("parents", parents));
+      var deliver = document.createElement("select");
+      [["", "collect only (no delivery)"],
+       ["notification", "notification — my home channel"],
+       ["channel", "channel — a specific chat"]].forEach(function (pair) {
+        var option = document.createElement("option");
+        option.value = pair[0];
+        option.textContent = pair[1];
+        if ((current.deliver || "") === pair[0]) { option.selected = true; }
+        deliver.appendChild(option);
+      });
+      deliver.addEventListener("change", function () {
+        if (deliver.value) { current.deliver = deliver.value; } else { delete current.deliver; }
+        buildInspector();
+        draw();
+      });
+      box.appendChild(field("deliver", deliver));
+      if (current.deliver === "channel") {
+        box.appendChild(field("target", textInput(current.target || "", function (v) {
+          current.target = v; draw();
+        }, "telegram:123456789")));
+        var targetHint = document.createElement("p");
+        targetHint.className = "hint";
+        targetHint.textContent = "<platform>:<chat id>. Leave empty to use the platform's home channel.";
+        box.appendChild(targetHint);
+      }
     }
   }
 
@@ -475,6 +760,7 @@
     }
     graph.nodes.push(fresh);
     selected = id;
+    selectedEdge = null;
     linkQueue = [id];
     buildInspector();
     draw();
@@ -530,7 +816,9 @@
     graph = clone(DEFAULT_GRAPH);
     layout();
     selected = null;
+    selectedEdge = null;
     linkQueue = [];
+    linkArm = null;
     document.getElementById("name").value = graph.name;
     buildInspector();
     draw();
@@ -589,18 +877,9 @@
       var target = ev.target || {};
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || "")) { return; }
       if (ev.key !== "Delete" && ev.key !== "Backspace") { return; }
-      if (!selected) { return; }
+      if (!selected && !selectedEdge) { return; }
       ev.preventDefault();
-      var removed = selected;
-      graph.nodes = graph.nodes.filter(function (n) { return n.id !== removed; });
-      graph.nodes.forEach(function (n) {
-        n.after = (n.after || []).filter(function (dep) { return dep !== removed; });
-      });
-      selected = null;
-      linkQueue = [];
-      buildInspector();
-      draw();
-      note("removed " + removed);
+      removeSelected();
     });
   }
 
@@ -608,6 +887,7 @@
   layout();
   buildInspector();
   draw();
+  refreshProfiles();
 }());
 </script>
 </body>

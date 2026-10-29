@@ -41,6 +41,32 @@
   var MODES = ["manual", "schedule", "webhook"];
   var NODE_W = 168;
   var NODE_H = 56;
+  var PORT_R = 5;
+
+  // ---- edge geometry (identical in dashboard/dist/index.js, widgets/designer.html and
+  // desktop/plugin.js: no build step, so the block is copied rather than imported).
+  // Every node has an OUTPUT port on its right edge and — except a trigger, which can have
+  // no parents — an INPUT port on its left edge. An edge is drawn from the parent's output
+  // port to the child's input port, so the arrow-less curve reads as a direction.
+  function outPort(n) {
+    return { x: n.x + NODE_W, y: n.y + NODE_H / 2 };
+  }
+
+  function inPort(n) {
+    return { x: n.x, y: n.y + NODE_H / 2 };
+  }
+
+  function edgeKey(from, to) {
+    return from + ">" + to;
+  }
+
+  function edgePath(parent, child) {
+    var p = outPort(parent);
+    var q = inPort(child);
+    var bend = Math.max(30, Math.abs(q.x - p.x) / 2);
+    return "M" + p.x + "," + p.y +
+      "C" + (p.x + bend) + "," + p.y + " " + (q.x - bend) + "," + q.y + " " + q.x + "," + q.y;
+  }
 
   // JSON (not a JS literal) so the base graph stays the same shape the tools accept.
   var BLANK_JSON =
@@ -81,6 +107,12 @@
     ".vw-canvas{display:block}",
     ".vw-canvas g.vw-node{cursor:grab}",
     ".vw-canvas g.vw-node:active{cursor:grabbing}",
+    ".vw-port{fill:var(--vw-surface);stroke:var(--vw-line);stroke-width:1.5;cursor:crosshair}",
+    ".vw-port:hover{fill:var(--vw-accent);stroke:var(--vw-accent)}",
+    ".vw-edge{fill:none;stroke:var(--vw-line);stroke-width:1.6}",
+    ".vw-edge-on{stroke:var(--vw-accent);stroke-width:2.4}",
+    ".vw-edge-hit{fill:none;stroke:transparent;stroke-width:12;cursor:pointer}",
+    ".vw-ghost{fill:none;stroke:var(--vw-accent);stroke-width:1.6;stroke-dasharray:4 3}",
   ].join("\n");
 
   var TEMPLATE =
@@ -101,7 +133,7 @@
     '      <button class="vw-pill" type="button" draggable="true" data-kind="condition">Condition</button>' +
     '      <button class="vw-pill" type="button" draggable="true" data-kind="approval">Approval</button>' +
     '      <button class="vw-pill" type="button" draggable="true" data-kind="output">Output</button>' +
-    '      <p class="vw-hint">Click two nodes, then Connect.</p>' +
+    '      <p class="vw-hint">Drag from a node&rsquo;s right port to another node&rsquo;s left port. Click an edge, then Delete, to cut it.</p>' +
     '    </div>' +
     '    <div class="vw-wrap" data-vw="wrap">' +
     '      <svg class="vw-canvas" data-vw="canvas" width="900" height="560" role="img" aria-label="workflow canvas"></svg>' +
@@ -179,7 +211,10 @@
 
     var graph = clone(BLANK);
     var selected = null;
+    var selectedEdge = null;
     var linkQueue = [];
+    var linkArm = null;   // source node id after a click on an output port
+    var dragLink = null;  // live drag from an output port: {from, x1, y1, x2, y2}
     var lastRun = null;
 
     function nodeById(id) {
@@ -221,13 +256,35 @@
         (n.after || []).forEach(function (dep) {
           var parent = byId[dep];
           if (!parent) return;
-          svg.appendChild(svgEl("line", {
-            x1: parent.x + NODE_W / 2, y1: parent.y + NODE_H / 2,
-            x2: n.x + NODE_W / 2, y2: n.y + NODE_H / 2,
-            stroke: "var(--vw-line)", "stroke-width": 1.5,
-          }));
+          var d = edgePath(parent, n);
+          var on = selectedEdge === edgeKey(parent.id, n.id);
+          var path = svgEl("path", { d: d, "class": on ? "vw-edge vw-edge-on" : "vw-edge" });
+          // A 1.6px stroke is nearly impossible to hit; the transparent twin is the target.
+          var hit = svgEl("path", { d: d, "class": "vw-edge-hit", "data-edge": edgeKey(parent.id, n.id) });
+          function cut(ev) {
+            ev.stopPropagation();
+            selectedEdge = edgeKey(parent.id, n.id);
+            selected = null;
+            buildInspector();
+            draw();
+          }
+          path.addEventListener("click", cut);
+          hit.addEventListener("click", cut);
+          hit.addEventListener("dblclick", function (ev) {
+            ev.stopPropagation();
+            cutEdge(parent.id, n.id);
+          });
+          svg.appendChild(path);
+          svg.appendChild(hit);
         });
       });
+
+      if (dragLink) {
+        svg.appendChild(svgEl("path", {
+          d: "M" + dragLink.x1 + "," + dragLink.y1 + "L" + dragLink.x2 + "," + dragLink.y2,
+          "class": "vw-ghost",
+        }));
+      }
 
       graph.nodes.forEach(function (n) {
         var isSelected = n.id === selected;
@@ -252,6 +309,33 @@
         g.appendChild(kind);
         g.appendChild(id);
         g.appendChild(sub);
+
+        var out = svgEl("circle", {
+          cx: NODE_W, cy: NODE_H / 2, r: PORT_R, "class": "vw-port",
+          "data-port": "out", "data-id": n.id,
+        });
+        out.addEventListener("mousedown", function (ev) {
+          // The port owns the gesture; without this the node drag starts instead.
+          ev.stopPropagation();
+          ev.preventDefault();
+          beginLink(n, ev);
+        });
+        g.appendChild(out);
+
+        if (n.type !== "trigger") {
+          var inp = svgEl("circle", {
+            cx: 0, cy: NODE_H / 2, r: PORT_R, "class": "vw-port",
+            "data-port": "in", "data-id": n.id,
+          });
+          inp.addEventListener("mousedown", function (ev) {
+            ev.stopPropagation();
+            ev.preventDefault();
+            if (linkArm) finishLink(linkArm, n.id);
+            else note("Drag from the right port of the parent node to here.");
+          });
+          g.appendChild(inp);
+        }
+
         wireNode(g, n);
         svg.appendChild(g);
       });
@@ -269,6 +353,9 @@
     function wireNode(g, n) {
       g.addEventListener("mousedown", function (ev) {
         if (ev.button !== 0) return;
+        // A port handler already claimed this press (stopPropagation also covers it, but a
+        // port inside a child <g> must never drag the node).
+        if (ev.target && ev.target.getAttribute && ev.target.getAttribute("data-port")) return;
         ev.preventDefault();
         var start = svgPoint(ev);
         var offset = { x: start.x - n.x, y: start.y - n.y };
@@ -292,6 +379,7 @@
 
     function pick(id) {
       selected = id;
+      selectedEdge = null;
       // The queue is "the two most recently clicked nodes", parent first. Clicking a node
       // again must not drop it (that would make click-click-Connect impossible).
       linkQueue = linkQueue.filter(function (x) {
@@ -301,23 +389,125 @@
       draw();
     }
 
+    /** The node under a canvas point, by geometry (DOM hit-testing would trip over the
+     *  edge hit-areas and the drag ghost stacked above the node). */
+    function nodeIdAtPoint(p) {
+      var PAD = 6;
+      for (var i = graph.nodes.length - 1; i >= 0; i -= 1) {
+        var n = graph.nodes[i];
+        if (p.x >= n.x - PAD && p.x <= n.x + NODE_W + PAD &&
+            p.y >= n.y - PAD && p.y <= n.y + NODE_H + PAD) return n.id;
+      }
+      return null;
+    }
+
+    /** Would making *to* depend on *from* close a loop? Walk up from *from*. */
+    function createsCycle(from, to) {
+      var seen = {};
+      var stack = [from];
+      while (stack.length) {
+        var id = stack.pop();
+        if (id === to) return true;
+        if (seen[id]) continue;
+        seen[id] = 1;
+        var n = nodeById(id);
+        if (n) stack = stack.concat(n.after || []);
+      }
+      return false;
+    }
+
+    /** Drag started on *n*'s output port: follow the pointer, connect on release. */
+    function beginLink(n, ev) {
+      var start = svgPoint(ev);
+      var origin = outPort(n);
+      var moved = false;
+      linkArm = null;
+      dragLink = { from: n.id, x1: origin.x, y1: origin.y, x2: start.x, y2: start.y };
+      draw();
+      function onMove(moveEv) {
+        var p = svgPoint(moveEv);
+        if (Math.abs(p.x - start.x) > 3 || Math.abs(p.y - start.y) > 3) moved = true;
+        dragLink.x2 = p.x;
+        dragLink.y2 = p.y;
+        draw();
+      }
+      function onUp(upEv) {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        var from = dragLink.from;
+        dragLink = null;
+        if (moved) {
+          var targetId = nodeIdAtPoint(svgPoint(upEv));
+          if (targetId && targetId !== from) finishLink(from, targetId);
+          else {
+            note("");
+            draw();
+          }
+          return;
+        }
+        // A click (no drag) arms the port, so the next input-port click completes it.
+        linkArm = from;
+        note("Now click the input port of the node that should run after " + from + ".");
+        draw();
+      }
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    }
+
+    /** Add the *from* -> *to* edge, refusing the three ways it could be wrong. */
+    function finishLink(from, to) {
+      linkArm = null;
+      var source = nodeById(from);
+      var target = nodeById(to);
+      if (!source || !target) return;
+      if (target.type === "trigger") {
+        note("a trigger cannot have parents");
+      } else if (from === to) {
+        note("a node cannot depend on itself");
+      } else if (createsCycle(from, to)) {
+        note("that edge would close a loop");
+      } else {
+        target.after = target.after || [];
+        if (target.after.indexOf(from) >= 0) note(from + " already feeds " + to);
+        else {
+          target.after.push(from);
+          note(from + " \u2192 " + to);
+        }
+      }
+      selectedEdge = null;
+      draw();
+      buildInspector();
+    }
+
+    function cutEdge(from, to) {
+      var target = nodeById(to);
+      if (target) {
+        target.after = (target.after || []).filter(function (dep) {
+          return dep !== from;
+        });
+      }
+      selectedEdge = null;
+      note("cut " + from + " \u2192 " + to);
+      draw();
+      buildInspector();
+    }
+
     function connect() {
       if (linkQueue.length < 2) {
-        note("Click two nodes on the canvas, then Connect.");
+        note("Drag from a node's right port to another node's left port.");
         return;
       }
-      var from = linkQueue[0];
-      var target = nodeById(linkQueue[1]);
-      if (!target) return;
-      target.after = target.after || [];
-      if (target.after.indexOf(from) < 0) target.after.push(from);
-      note("");
-      draw();
+      finishLink(linkQueue[0], linkQueue[1]);
     }
 
     function removeSelected() {
+      if (selectedEdge) {
+        var parts = selectedEdge.split(">");
+        cutEdge(parts[0], parts[1]);
+        return;
+      }
       if (!selected) {
-        note("Select a node first.");
+        note("Select a node or an edge first.");
         return;
       }
       var removed = selected;
@@ -330,7 +520,9 @@
         });
       });
       selected = null;
+      selectedEdge = null;
       linkQueue = [];
+      linkArm = null;
       buildInspector();
       draw();
       note("removed " + removed);
@@ -365,6 +557,53 @@
         onInput(area.value);
       });
       return area;
+    }
+
+    /** Host profiles ("bots") as ``[{name, label, model, provider}]``; empty when the
+     *  backend could not list them, in which case the picker degrades to a placeholder. */
+    var profiles = options.profiles || [];
+
+    function profileByName(name) {
+      if (!name) return null;
+      var hits = profiles.filter(function (p) {
+        return p.name === name;
+      });
+      return hits[0] || null;
+    }
+
+    function profileSelect(current) {
+      var select = document.createElement("select");
+      var blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = profiles.length ? "\u2014 host default \u2014" : "\u2014 no profiles listed \u2014";
+      select.appendChild(blank);
+      var known = false;
+      profiles.forEach(function (p) {
+        var option = document.createElement("option");
+        option.value = p.name;
+        option.textContent = p.label && p.label !== p.name ? p.label + " (" + p.name + ")" : p.name;
+        if (p.name === current.profile) {
+          option.selected = true;
+          known = true;
+        }
+        select.appendChild(option);
+      });
+      if (current.profile && !known) {
+        // A saved design can name a profile that was renamed or removed: keep the value
+        // visible instead of silently resetting it.
+        var stale = document.createElement("option");
+        stale.value = current.profile;
+        stale.textContent = current.profile + " (not found)";
+        stale.selected = true;
+        select.appendChild(stale);
+      }
+      select.addEventListener("change", function () {
+        if (select.value) current.profile = select.value;
+        else delete current.profile;
+        buildInspector();
+        draw();
+      });
+      return select;
     }
 
     function buildInspector() {
@@ -410,6 +649,16 @@
           current.prompt = v;
           draw();
         }, 5)));
+        box.appendChild(field("profile / bot (optional)", profileSelect(current)));
+        var chosen = profileByName(current.profile);
+        if (chosen) {
+          var runs = document.createElement("p");
+          runs.className = "vw-hint";
+          runs.textContent = "runs as " + (chosen.label || chosen.name) +
+            (chosen.model ? " \u00b7 " + chosen.model : "") +
+            (chosen.provider ? " / " + chosen.provider : "");
+          box.appendChild(runs);
+        }
         box.appendChild(field("model (optional)", textInput(current.model || "", function (v) {
           current.model = v;
         })));
@@ -449,6 +698,33 @@
           ? (current.after || []).join(", ")
           : "(no parents \u2014 this output collects nothing)";
         box.appendChild(field("parents", parents));
+        var deliver = document.createElement("select");
+        [["", "collect only (no delivery)"],
+         ["notification", "notification \u2014 my home channel"],
+         ["channel", "channel \u2014 a specific chat"]].forEach(function (pair) {
+          var option = document.createElement("option");
+          option.value = pair[0];
+          option.textContent = pair[1];
+          if ((current.deliver || "") === pair[0]) option.selected = true;
+          deliver.appendChild(option);
+        });
+        deliver.addEventListener("change", function () {
+          if (deliver.value) current.deliver = deliver.value;
+          else delete current.deliver;
+          buildInspector();
+          draw();
+        });
+        box.appendChild(field("deliver", deliver));
+        if (current.deliver === "channel") {
+          box.appendChild(field("target", textInput(current.target || "", function (v) {
+            current.target = v;
+            draw();
+          }, "telegram:123456789")));
+          var targetHint = document.createElement("p");
+          targetHint.className = "vw-hint";
+          targetHint.textContent = "<platform>:<chat id>. Leave empty to use the platform's home channel.";
+          box.appendChild(targetHint);
+        }
       }
     }
 
@@ -489,6 +765,7 @@
       }
       graph.nodes.push(fresh);
       selected = id;
+      selectedEdge = null;
       linkQueue = [id];
       buildInspector();
       draw();
@@ -616,6 +893,16 @@
       return b;
     }
 
+    /** "sent out \u2192 telegram (\u2026); FAILED out \u2192 \u2026" for every output that delivered. */
+    function deliveryLine(result) {
+      var list = result.deliveries || [];
+      if (!list.length) return null;
+      return line("p", "delivery: " + list.map(function (d) {
+        return (d.ok ? "sent " : "FAILED ") + d.node_id + " \u2192 " + (d.target || "?") +
+          (d.detail ? " " + d.detail : "");
+      }).join(" \u00b7 "), "vw-muted");
+    }
+
     function renderRun(result) {
       lastRun = result;
       var box = el.run;
@@ -667,6 +954,8 @@
         var error = result.error || {};
         box.appendChild(line("h4", "run failed"));
         box.appendChild(line("pre", (error.node_id ? error.node_id + ": " : "") + (error.msg || "")));
+        var failedDelivery = deliveryLine(result);
+        if (failedDelivery) box.appendChild(failedDelivery);
         return;
       }
 
@@ -676,6 +965,8 @@
         if ((result.skipped || []).length) {
           box.appendChild(line("p", "skipped: " + result.skipped.join(", "), "vw-muted"));
         }
+        var delivered = deliveryLine(result);
+        if (delivered) box.appendChild(delivered);
         box.appendChild(line("pre", JSON.stringify(outputs, null, 2)));
         return;
       }
@@ -730,7 +1021,10 @@
       graph = clone(next && next.nodes ? next : BLANK);
       if (!graph.name) graph.name = "untitled";
       selected = null;
+      selectedEdge = null;
       linkQueue = [];
+      linkArm = null;
+      dragLink = null;
       lastRun = null;
       el.run.textContent = "";
       el.errors.textContent = "";
@@ -743,6 +1037,11 @@
 
     return {
       loadGraph: loadGraph,
+      /** Replace the profile/bot list the agent inspector offers. */
+      setProfiles: function (list) {
+        profiles = Array.isArray(list) ? list : [];
+        buildInspector();
+      },
       /** The draft graph as it would be sent to the backend. */
       getGraph: payloadGraph,
       newDesign: function (name) {
@@ -769,6 +1068,16 @@
       });
     }, []);
 
+    // Profiles ("bots") are listed once per mount; a failure is not fatal — the picker
+    // simply has nothing to offer and the free-text model/provider fields still work.
+    var loadProfiles = useCallback(function () {
+      return fetchJSON(API + "/profiles").then(function (data) {
+        if (designerRef.current) designerRef.current.setProfiles((data && data.profiles) || []);
+      }).catch(function () {
+        if (designerRef.current) designerRef.current.setProfiles([]);
+      });
+    }, []);
+
     useEffect(function () {
       if (!hostRef.current) return undefined;
       designerRef.current = createDesigner(hostRef.current, {
@@ -776,10 +1085,11 @@
         onSaved: refresh,
       });
       refresh();
+      loadProfiles();
       return function () {
         designerRef.current = null;
       };
-    }, [refresh]);
+    }, [refresh, loadProfiles]);
 
     function open(name) {
       setActive(name);

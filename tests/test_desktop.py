@@ -105,6 +105,33 @@ def test_canvas_keeps_the_var_paint_fix(source):
     assert "style.setProperty" in source
 
 
+# ------------------------------------------------------------------- features
+def test_nodes_have_ports_and_edges_are_draggable(source):
+    """The same canvas core as the dashboard tab: port-to-port connect, cut by click."""
+    assert "function outPort(n)" in source and "function inPort(n)" in source
+    assert "function edgePath(parent, child)" in source
+    assert source.count('"data-port"') >= 2
+    assert 'n.type !== "trigger"' in source, "a trigger has no input port"
+    assert '"vw-edge-hit"' in source
+    assert "function beginLink(" in source and "function finishLink(" in source
+    assert "function cutEdge(" in source and "selectedEdge" in source
+
+
+def test_agent_picker_reads_the_plugin_profiles_route(source):
+    assert '"/profiles"' in source, "the picker lists profiles through ctx.rest"
+    assert "function refreshProfiles(" in source
+    assert "function profileSelect(" in source
+    assert "profile / bot" in source
+
+
+def test_output_delivery_is_offered_and_reported(source):
+    assert 'field("deliver"' in source
+    assert '"notification"' in source and '"channel"' in source
+    assert 'field("target"' in source
+    assert "function deliveryLine(" in source, "the run box must show what was delivered"
+    assert "result.deliveries" in source
+
+
 # -------------------------------------------------- live registration (Node)
 @pytest.fixture(scope="module")
 def registration(tmp_path_factory, source):

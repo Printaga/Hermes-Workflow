@@ -8,18 +8,22 @@ Design, validate, and run visual agent workflows.
 ::preview{file="<REPO_ABS>/widgets/designer.html"}
 ```
 
-One static file, no dependencies. Click a palette kind to add a node, drag to arrange, click two
-nodes then **Connect** to add an edge, **Delete** to remove the selection.
+One static file, no dependencies. Click a palette kind to add a node, drag to arrange. Each node
+has an output port on its right and an input port on its left (a trigger has no input): drag
+from an output port to another node to add an edge, click an edge and press Delete to cut it.
 
 ## The five node kinds (never invent others)
 
 `trigger`, `agent`, `condition`, `approval`, `output`.
 
 * exactly one `trigger` per design; `trigger_mode` is `manual`, `schedule` or `webhook`
-* `agent` needs `prompt`; optional `model` / `provider`
+* `agent` needs `prompt`; optional `profile` (a host bot), `model` / `provider` (override it)
 * `condition` needs `expression` of the form `out.<node>.<field> <op> <value>`
 * `approval` needs `question`; `options` is a list of acceptable answers
-* `output` collects its parents' outputs and needs no fields
+* `output` collects its parents' outputs; optional `deliver` (`notification` for a platform's
+  home channel, `channel` for a specific chat) plus a `target` (`telegram`, `telegram:123456`,
+  `slack:#ops`). Leave both off to only collect. Never claim a delivery happened — read
+  `deliveries` in the run result.
 
 Edges are `after: [<parent-id>...]`; a node runs after all parents. `x`/`y` are widget-only.
 
@@ -34,7 +38,8 @@ Edges are `after: [<parent-id>...]`; a node runs after all parents. `x`/`y` are 
 
 `workflow_design_run` returns a status:
 
-* `done` — inspect `outputs`; `skipped` lists nodes gated off by a false condition.
+* `done` — inspect `outputs`; `skipped` lists nodes gated off by a false condition;
+  `deliveries` lists each output's send attempt (`node_id`, `target`, `ok`, `detail`).
 * `awaiting_approval` — ask the user `pending.question` (options in `pending.options`), then
   `workflow_design_respond` with `run_id`, `node_id` and the chosen `answer`.
 * `awaiting_agent` — perform `pending.prompt` yourself, then respond with the output as

@@ -100,3 +100,42 @@ def test_validation_rules_are_ported(html):
     assert "workflow needs exactly one trigger" in html
     assert "dependency cycle" in html
     assert "node cannot depend on itself" in html
+
+
+# ---------------------------------------------------------------- canvas edges
+def test_nodes_have_explicit_ports_and_edges_are_curves(html):
+    """Click-two-nodes-then-Connect was unusable; the canvas now drags port to port."""
+    assert "function outPort(n)" in html and "function inPort(n)" in html
+    assert "function edgePath(parent, child)" in html
+    assert html.count('"data-port"') >= 2, "every node needs an out port and an in port"
+    # The input port is omitted on a trigger: a trigger can never have parents.
+    assert 'n.type !== "trigger"' in html
+    assert '"edge-hit"' in html, "edges need a fat transparent hit area to be clickable"
+
+
+def test_dragging_from_a_port_connects_and_bad_edges_are_refused(html):
+    assert "function beginLink(" in html
+    assert "function finishLink(" in html
+    assert "nodeIdAtPoint" in html, "the drop target must be resolved by geometry"
+    assert "that edge would close a loop" in html
+    assert "a trigger cannot have parents" in html
+    assert "function createsCycle(" in html
+
+
+def test_an_edge_can_be_selected_and_cut(html):
+    assert "selectedEdge" in html
+    assert "function cutEdge(" in html
+    assert "function removeSelected(" in html
+    assert "cut " in html
+
+
+def test_agent_node_offers_a_profile_picker(html):
+    assert "function profileControl(" in html
+    assert "/api/plugins/visual-workflow/profiles" in html
+    assert "profile / bot" in html
+
+
+def test_output_node_can_deliver_and_validates_its_target(html):
+    assert 'field("deliver"' in html
+    assert '"notification"' in html and '"channel"' in html
+    assert 'field("target"' in html
