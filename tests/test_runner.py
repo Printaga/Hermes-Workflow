@@ -196,6 +196,66 @@ def test_finished_run_is_done_on_disk(tmp_path):
     assert stored["status"] == "done"
 
 
+# -- condition coercion, inputs, context cap (plan Task 1) -------------------
+# A confirmed crash: an agent that answers with a string field compared numerically raised a
+# bare TypeError that escaped run_plan *and* tool_run, so the dispatcher returned a 500.
+
+def test_string_output_compares_numerically_both_directions():
+    outputs = {"draft": {"word_count": "25"}}
+    assert evaluate_condition("out.draft.word_count > 20", outputs, {"draft"}) is True
+    assert evaluate_condition("out.draft.word_count < 30", outputs, {"draft"}) is True
+    # Quotes still mean a string literal, so the left side stays text there too.
+    assert evaluate_condition("out.draft.word_count == '25'", outputs, {"draft"}) is True
+
+
+def test_uncomparable_values_raise_step_error_not_type_error():
+    outputs = {"draft": {"tags": [1, 2]}}
+    with pytest.raises(StepError) as exc:
+        evaluate_condition("out.draft.tags > 5", outputs, {"draft"})
+    assert "cannot compare" in str(exc.value)
+
+
+def test_a_condition_crash_inside_run_plan_fails_the_run_instead_of_raising():
+    plan = _plan(
+        {"id": "a", "kind": "agent", "after": [], "prompt": "x"},
+        {"id": "c", "kind": "condition", "expression": "out.a.tags > 5", "after": ["a"]},
+    )
+    state = run_plan(plan, new_state(plan, "r3"), spawn=lambda *a: {"structured": {"tags": [1]}})
+    assert state["status"] == "failed"
+    assert state["error"]["node_id"] == "c"
+
+
+def test_named_inputs_land_in_the_agent_context():
+    from visual_workflow_hermes.runner import render_context
+
+    outputs = {"draft": {"text": "hello", "words": 3}, "notes": "plain"}
+    context = render_context(
+        {"id": "polish", "kind": "agent", "after": [],
+         "inputs": ["draft", "draft.words", "notes"]}, outputs)
+    assert "hello" in context and "3" in context and "plain" in context
+    assert context.count("--- output from") == 3
+
+
+def test_an_unknown_named_input_is_a_step_error():
+    from visual_workflow_hermes.runner import render_context
+
+    with pytest.raises(StepError):
+        render_context({"id": "x", "kind": "agent", "inputs": ["ghost"]}, {})
+    with pytest.raises(StepError):
+        render_context({"id": "x", "kind": "agent", "inputs": ["draft.nope"]},
+                       {"draft": {"text": "hi"}})
+
+
+def test_context_is_capped_per_block_with_a_marker():
+    from visual_workflow_hermes.runner import MAX_CONTEXT_CHARS, render_context
+
+    context = render_context({"id": "x", "kind": "agent", "after": ["big"]},
+                             {"big": "w" * 10_000})
+    assert len(context) < 10_000
+    assert "truncated" in context
+    assert MAX_CONTEXT_CHARS > 0
+
+
 def test_failed_status_reaches_on_step():
     plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "x"})
     saved = []

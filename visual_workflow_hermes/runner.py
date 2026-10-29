@@ -6,6 +6,7 @@ place and is JSON-serializable, so a paused run can be persisted and resumed lat
 """
 from __future__ import annotations
 
+import json
 import operator
 import re
 
@@ -13,16 +14,61 @@ COMPARATORS = {"==": operator.eq, "!=": operator.ne, ">": operator.gt,
                ">=": operator.ge, "<": operator.lt, "<=": operator.le}
 _HEAD_RE = re.compile(r"^out\.(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$")
 PAUSED = ("awaiting_approval", "awaiting_agent")
+# One upstream output is injected as one block; a long draft must not eat the agent's context.
+MAX_CONTEXT_CHARS = 4000
+_TRUNCATED = "\n[\u2026 truncated {n} chars \u2026]"
 
 
 class StepError(ValueError):
     """A step could not run (bad expression, missing input, agent failure)."""
 
 
+def _as_text(value) -> str:
+    """One upstream value as context text: strings verbatim, anything else as JSON."""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):  # not JSON-serializable: fall back like str() would
+        return str(value)
+
+
+def _context_block(label: str, value) -> str:
+    """A labelled block, capped so one long output cannot crowd out the rest."""
+    text = _as_text(value)
+    if len(text) > MAX_CONTEXT_CHARS:
+        text = text[:MAX_CONTEXT_CHARS] + _TRUNCATED.format(n=len(text) - MAX_CONTEXT_CHARS)
+    return f"--- output from {label} ---\n{text}"
+
+
 def render_context(step: dict, outputs: dict) -> str:
-    """Upstream outputs as labelled text, for an agent's ``context``."""
-    upstream = {p: outputs[p] for p in step.get("after", []) if p in outputs}
-    return "\n\n".join(f"--- output from {k} ---\n{v}" for k, v in upstream.items())
+    """Upstream outputs as labelled text, for an agent's ``context``.
+
+    Two ways to name an upstream value, both honoured here because ``convert.py`` passes both
+    onto the step: ``after`` (every parent's whole output) and ``inputs`` (an explicit list of
+    ``<node>`` or ``<node>.<path>`` refs, so a step can take just the fields it needs). An
+    ``inputs`` ref that cannot be resolved is a design defect, raised as ``StepError`` like a
+    bad condition, never silently ignored.
+    """
+    blocks: list[str] = []
+    used: set[str] = set()
+    for parent in step.get("after", []):
+        if parent in outputs:
+            blocks.append(_context_block(parent, outputs[parent]))
+            used.add(parent)
+    for raw in step.get("inputs") or []:
+        ref = str(raw or "").strip()
+        if not ref or ref in used:
+            continue
+        node, _, path = ref.partition(".")
+        if node not in outputs:
+            raise StepError(
+                f"agent input {ref!r} references node {node!r} that has not produced output"
+            )
+        value = outputs[node] if not path else _dig(outputs[node], path)
+        blocks.append(_context_block(ref, value))
+        used.add(ref)
+    return "\n\n".join(blocks)
 
 
 def _coerce(text: str):
@@ -71,7 +117,18 @@ def evaluate_condition(expression: str, outputs: dict, node_ids) -> bool:
     if node not in outputs:
         raise StepError(f"condition references node {node!r} that has not produced output")
     left = outputs[node] if target == node else _dig(outputs[node], target[len(node) + 1:])
-    return bool(COMPARATORS[op](left, _coerce(literal)))
+    right = _coerce(literal)
+    # An agent often answers with numbers as text ({"word_count": "25"}). When the author
+    # wrote a number, compare the left side as a number too. When the author quoted the
+    # literal, they asked for a string comparison and the text is left alone.
+    if isinstance(left, str) and not isinstance(right, str):
+        left = _coerce(left)
+    try:
+        return bool(COMPARATORS[op](left, right))
+    except (TypeError, ValueError) as exc:
+        raise StepError(
+            f"cannot compare {left!r} {op} {right!r} in {expression!r}: {exc}"
+        ) from exc
 
 
 def run_plan(plan: dict, state: dict, spawn=None, on_step=None, deliver=None) -> dict:
