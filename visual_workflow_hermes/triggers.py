@@ -1,5 +1,8 @@
-"""Trigger helpers. Manual runs now; schedule replays through ``cronjob_manage``; webhook is
-a declared Phase 1 stub.
+"""Trigger helpers. Manual runs now; schedule replays through ``cronjob_manage``.
+
+An inbound webhook is not a trigger mode: Hermes' webhook subscriptions are operator-managed
+(``hermes webhook subscribe``, HMAC secret) and can fire an existing cron job, so an external
+POST reaches a schedule — it cannot reach a plugin route, because plugins cannot open one.
 
 The cron surface is the ``cronjob_manage`` tool (toolset ``cronjob``), not
 ``cron_providers/chronos`` — chronos is a scheduler *backend* selected via ``cron.provider``.
@@ -52,15 +55,3 @@ def schedule_plan(designer: dict, *, deliver: str = "origin") -> dict:
         "enabled_toolsets": [TOOLSET],
         "deliver": deliver,
     }
-
-
-def webhook_stub(designer: dict) -> dict:
-    """Phase 1 declares the webhook trigger but never fires it (see plan risks)."""
-    trig = _trigger(designer)
-    if trig.get("trigger_mode") != "webhook":
-        raise ValueError("trigger_mode is not webhook")
-    path = (trig.get("webhook_path") or "").strip()
-    if not path:
-        raise ValueError("webhook trigger needs a 'webhook_path'")
-    return {"declared": True, "path": path, "phase": 2,
-            "note": "Phase 1: fire manually via /workflow run; inbound wiring is Phase 2"}

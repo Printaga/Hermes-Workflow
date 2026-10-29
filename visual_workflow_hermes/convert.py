@@ -83,7 +83,6 @@ def build_run_plan(designer: dict) -> dict:
             "trigger": {
                 "mode": trig.get("trigger_mode", "manual"),
                 "schedule": trig.get("schedule", ""),
-                "webhook_path": trig.get("webhook_path", ""),
             },
             "designer": True,
         },

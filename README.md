@@ -12,7 +12,7 @@ Designs live as plain JSON under `~/.hermes/workflow-designs/<name>.json`; run s
 
 | Kind | Fields | Run-plan mapping |
 | --- | --- | --- |
-| `trigger` | `trigger_mode` (`manual`/`schedule`/`webhook`), `schedule` cron, `webhook_path` | Not a step: recorded in `plan["meta"]["trigger"]`. Exactly one per design. |
+| `trigger` | `trigger_mode` (`manual`/`schedule`), `schedule` cron | Not a step: recorded in `plan["meta"]["trigger"]`. Exactly one per design. |
 | `agent` | `prompt` (required), `profile`, `model`, `provider`, `schema`, `inputs`, `timeout` | A step that runs an agent. `profile` picks a host bot; its model/provider apply unless the node overrides them. Without a subagent backend it pauses as `awaiting_agent` with `pending.prompt`. |
 | `condition` | `expression` (required) — `out.<node>.<field> <op> <value>` | Evaluated locally against upstream outputs; a false gate skips its downstream subtree (reported in `skipped`). |
 | `approval` | `question` (required), `options`, `context` | Pauses the run as `awaiting_approval` until `workflow_design_respond` answers it. |
@@ -110,8 +110,9 @@ The agent-facing tools mirror the verbs:
   `schedule` trigger: a self-contained prompt that makes the cron session call
   `workflow_design_run` and resume any `awaiting_agent` step. Registering the job stays a
   deliberate, user-initiated action.
-* **Webhook** — Phase 1 stub. The designer already stores `webhook_path`, so the data model is
-  ready; no listener is started (that needs a security review first).
+* **Inbound HTTP** — not a designer mode, because a plugin cannot open a route. Hermes'
+  operator-managed `hermes webhook subscribe` (HMAC secret) can fire the schedule's cron job,
+  so an outside POST *reaches* a schedule without the canvas pretending to own a URL.
 
 ## OpenBot parity notes
 

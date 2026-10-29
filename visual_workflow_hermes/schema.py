@@ -4,7 +4,12 @@ from __future__ import annotations
 import re
 
 NODE_KINDS = ("trigger", "agent", "condition", "approval", "output")
-TRIGGER_MODES = ("manual", "schedule", "webhook")
+# "webhook" was removed rather than stubbed: Hermes' inbound webhooks are operator-managed
+# subscriptions (`hermes webhook subscribe`, HMAC secret) that fire the AGENT or an existing cron
+# job, and a plugin cannot open a route of its own. A design can still be reached from outside by
+# subscribing to it — README documents the exact command — but a picker that records a URL nobody
+# listens on is a dead control, so the mode is gone.
+TRIGGER_MODES = ("manual", "schedule")
 # How an output node hands its payload on: to the platform's home channel ("notification") or
 # to an explicit <platform>:<chat> target ("channel"). Absent = collect only.
 DELIVER_MODES = ("notification", "channel")

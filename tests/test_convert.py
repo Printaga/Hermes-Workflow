@@ -92,7 +92,7 @@ def test_schedule_metadata_survives_into_the_plan():
         {"id": "a", "type": "agent", "prompt": "p", "after": ["t"]},
     ]}
     meta = build_run_plan(designer)["meta"]["trigger"]
-    assert meta == {"mode": "schedule", "schedule": "0 9 * * *", "webhook_path": ""}
+    assert meta == {"mode": "schedule", "schedule": "0 9 * * *"}
 
 
 def test_approval_timeout_survives_into_the_plan():

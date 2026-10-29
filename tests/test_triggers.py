@@ -1,6 +1,6 @@
 import pytest
 
-from visual_workflow_hermes.triggers import schedule_plan, webhook_stub
+from visual_workflow_hermes.triggers import schedule_plan
 
 
 def _schedule_design(cron="0 9 * * *"):
@@ -45,10 +45,13 @@ def test_schedule_plan_rejects_a_design_with_no_trigger():
         schedule_plan({"name": "x", "nodes": []})
 
 
-def test_webhook_stub_declares_without_firing():
-    design = {"name": "hook", "nodes": [
-        {"id": "t", "type": "trigger", "trigger_mode": "webhook",
-         "webhook_path": "/incoming/foo", "after": []}]}
-    stub = webhook_stub(design)
-    assert stub["declared"] is True and stub["phase"] == 2
-    assert stub["path"] == "/incoming/foo"
+def test_webhook_is_not_offered_as_a_trigger_mode():
+    """A plugin cannot open an inbound route, so a mode that records a URL would be a lie.
+
+    Hermes' own webhook subscriptions fire an existing cron job; README points there instead.
+    """
+    from visual_workflow_hermes import triggers
+    from visual_workflow_hermes.schema import TRIGGER_MODES
+
+    assert "webhook" not in TRIGGER_MODES
+    assert not hasattr(triggers, "webhook_stub")

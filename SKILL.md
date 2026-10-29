@@ -16,7 +16,7 @@ from an output port to another node to add an edge, click an edge and press Dele
 
 `trigger`, `agent`, `condition`, `approval`, `output`.
 
-* exactly one `trigger` per design; `trigger_mode` is `manual`, `schedule` or `webhook`
+* exactly one `trigger` per design; `trigger_mode` is `manual` or `schedule`
 * `agent` needs `prompt`; optional `profile` (a host bot), `model` / `provider` (override it)
 * `condition` needs `expression` of the form `out.<node>.<field> <op> <value>`
 * `approval` needs `question`; `options` is a list of acceptable answers
@@ -51,5 +51,6 @@ Never guess a `run_id` or gate id: use the ones in the response.
 ## Triggers
 
 Manual runs are wired. For a `schedule` trigger, `triggers.schedule_plan(design)` yields the
-`cronjob_manage` arguments; ask the user before registering anything recurring. `webhook` is a
-declared stub in Phase 1 — say so instead of promising a listener.
+`cronjob_manage` arguments; ask the user before registering anything recurring. Inbound HTTP
+is not a mode: point the user at `hermes webhook subscribe`, which can fire that cron job —
+never promise a listener the plugin does not own.

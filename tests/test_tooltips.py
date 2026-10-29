@@ -34,7 +34,6 @@ OPTION_KEYS = (
     "trigger.time",
     "trigger.weekday",
     "trigger.schedule",
-    "trigger.webhook_path",
     "agent.prompt",
     "agent.profile",
     "agent.model",

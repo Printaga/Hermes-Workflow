@@ -25,7 +25,7 @@ import { jsx } from "react/jsx-runtime";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const KINDS = ["trigger", "agent", "condition", "approval", "output"];
-const MODES = ["manual", "schedule", "webhook"];
+const MODES = ["manual", "schedule"];
 
 // ---- tooltips ---------------------------------------------------------------
 // One table, one wording, all three surfaces (dashboard/dist/index.js, desktop/plugin.js,
@@ -33,17 +33,16 @@ const MODES = ["manual", "schedule", "webhook"];
 // page, inside SVG and in a standalone file alike; tests/test_tooltips.py asserts every node
 // kind and every inspector option has a real sentence here.
 const TIPS = {
-  trigger: "Starts the run: by hand, on a Hermes schedule, or from a webhook once Phase 2 lands.",
+  trigger: "Starts the run: by hand when you press Run, or on a Hermes schedule you pick.",
   agent: "Asks a bot to do one step and waits for its reply.",
   condition: "Compares a field from an earlier step and skips the branch when the test fails.",
   approval: "Pauses the run and asks a person to choose or type an answer.",
   output: "Collects the results, and can send them to one of your chats.",
-  "trigger.trigger_mode": "How the run starts: manual (you press Run), schedule (Hermes cron), or webhook (declared only for now).",
+  "trigger.trigger_mode": "How the run starts: manual (you press Run) or schedule (a real Hermes cron job).",
   "trigger.preset": "Pick a schedule in plain words: every day, Monday to Friday, once a week, every hour, or advanced cron.",
   "trigger.time": "Local time of day for the schedule, 24-hour HH:MM (e.g. 09:30).",
   "trigger.weekday": "Day of the week a weekly schedule runs on.",
   "trigger.schedule": "The cron expression actually saved: minute hour day-of-month month weekday \u2014 0 9 * * 1-5 is 09:00 Monday to Friday.",
-  "trigger.webhook_path": "URL path an outside service will POST to \u2014 Phase 2: declared only, nothing listens yet.",
   "agent.prompt": "What this step should do; the reply becomes out.<node>.text for later steps.",
   "agent.profile": "Which bot runs the step; host default uses the bot you have active.",
   "agent.model": "Model override for this step only; empty keeps the bot's own model.",
@@ -1024,12 +1023,6 @@ function createDesigner(host, call) {
       box.appendChild(field("trigger_mode", select, TIPS["trigger.trigger_mode"]));
       if (current.trigger_mode === "schedule") {
         box.appendChild(scheduleFields(current));
-      }
-      if (current.trigger_mode === "webhook") {
-        box.appendChild(field("webhook_path", textInput(current.webhook_path || "", (v) => {
-          current.webhook_path = v;
-          draw();
-        }, "/hooks/my-workflow"), TIPS["trigger.webhook_path"]));
       }
     } else if (current.type === "agent") {
       box.appendChild(field("prompt", textArea(current.prompt || "", (v) => {
