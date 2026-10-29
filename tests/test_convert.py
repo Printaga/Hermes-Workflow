@@ -93,3 +93,14 @@ def test_schedule_metadata_survives_into_the_plan():
     ]}
     meta = build_run_plan(designer)["meta"]["trigger"]
     assert meta == {"mode": "schedule", "schedule": "0 9 * * *", "webhook_path": ""}
+
+
+def test_approval_timeout_survives_into_the_plan():
+    designer = {"name": "gated", "nodes": [
+        {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "g", "type": "approval", "question": "ok?", "options": ["yes", "no"],
+         "timeout_minutes": 15, "on_timeout": "Escalate", "after": ["t"]},
+    ]}
+    step = build_run_plan(designer)["steps"][0]
+    assert step["timeout_minutes"] == 15
+    assert step["on_timeout"] == "escalate"

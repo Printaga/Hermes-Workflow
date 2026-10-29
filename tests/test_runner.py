@@ -264,3 +264,58 @@ def test_failed_status_reaches_on_step():
                      on_step=lambda s: saved.append(s["status"]))
     assert state["status"] == "failed"
     assert saved[-1] == "failed"
+
+
+# -- approval gate timeouts (plan Task 2) ------------------------------------
+# A gate that waits forever is the classic HITL production failure; the deadline travels with
+# the pause so a run reloaded days later still knows when it expired.
+
+def _gate_plan(**extra):
+    step = {"id": "g", "kind": "approval", "after": [], "question": "ok?",
+            "options": ["yes", "no"]}
+    step.update(extra)
+    return _plan(step, {"id": "o", "kind": "output", "after": ["g"], "keys": ["g"]})
+
+
+def test_gate_timeout_fails_the_run_with_the_policy_in_the_error():
+    from visual_workflow_hermes.runner import check_timeouts
+
+    plan = _gate_plan(timeout_minutes=10, on_timeout="escalate")
+    state = run_plan(plan, new_state(plan, "r5"))
+    assert state["status"] == "awaiting_approval"
+    waiting_since = state["pending"]["waiting_since"]
+    assert state["pending"]["timeout_minutes"] == 10
+    assert state["pending"]["on_timeout"] == "escalate"
+
+    check_timeouts(state, now=waiting_since + 9 * 60)
+    assert state["status"] == "awaiting_approval", "must not expire before the deadline"
+
+    check_timeouts(state, now=waiting_since + 11 * 60)
+    assert state["status"] == "failed"
+    assert state["pending"] is None
+    assert state["error"]["node_id"] == "g"
+    assert "timed out" in state["error"]["msg"] and "escalate" in state["error"]["msg"]
+    assert state["error"]["detail"] == "escalation requested"
+
+
+def test_a_gate_without_a_timeout_waits_forever():
+    from visual_workflow_hermes.runner import check_timeouts
+
+    plan = _gate_plan()
+    state = run_plan(plan, new_state(plan, "r6"))
+    check_timeouts(state, now=state["pending"]["waiting_since"] + 10 * 365 * 24 * 3600)
+    assert state["status"] == "awaiting_approval"
+
+
+def test_late_answer_after_expiry_is_a_step_error_and_is_persisted():
+    from visual_workflow_hermes.runner import check_timeouts
+
+    plan = _gate_plan(timeout_minutes=1)
+    state = run_plan(plan, new_state(plan, "r7"))
+    check_timeouts(state, now=state["pending"]["waiting_since"] + 120)
+
+    saved = []
+    with pytest.raises(StepError) as exc:
+        resume_plan(plan, state, "yes", on_step=lambda s: saved.append(s["status"]))
+    assert "timed out" in str(exc.value)
+    assert saved and saved[-1] == "failed"

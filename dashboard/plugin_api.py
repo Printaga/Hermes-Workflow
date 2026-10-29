@@ -27,7 +27,13 @@ from visual_workflow_hermes.channels import list_host_channels  # noqa: E402
 from visual_workflow_hermes.convert import build_run_plan  # noqa: E402
 from visual_workflow_hermes.delivery import deliver_output  # noqa: E402
 from visual_workflow_hermes.profiles import list_host_profiles  # noqa: E402
-from visual_workflow_hermes.runner import StepError, new_state, resume_plan, run_plan  # noqa: E402
+from visual_workflow_hermes.runner import (  # noqa: E402
+    StepError,
+    check_timeouts,
+    new_state,
+    resume_plan,
+    run_plan,
+)
 from visual_workflow_hermes.schedule import (  # noqa: E402
     apply_action,
     build_cron,
@@ -81,6 +87,20 @@ def _load_design(name: str) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:  # malformed name
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _settled(state: dict, runs: RunStore) -> dict:
+    """Apply a gate's deadline to a stored run and save the verdict once, when it expires.
+
+    Nothing sweeps paused runs in the background, so reading a run is the moment its timeout
+    can be honoured — otherwise an abandoned gate would wait forever, which is the whole point
+    of having a deadline.
+    """
+    before = state.get("status")
+    check_timeouts(state)
+    if state.get("status") != before:
+        runs.save(state)
+    return state
 
 
 def _load_run(run_id: str) -> dict:
@@ -241,9 +261,10 @@ def list_runs(limit: int = 20) -> dict:
     a cron job or another tab was invisible and could not be answered. Each row carries what a
     reviewer needs to act: status, and for a gate the question and its options.
     """
+    runs = _runs()
     rows = []
-    for row in _runs().recent(limit):
-        state = row["state"]
+    for row in runs.recent(limit):
+        state = _settled(row["state"], runs)
         pending = state.get("pending") or {}
         rows.append(
             {
@@ -253,6 +274,10 @@ def list_runs(limit: int = 20) -> dict:
                 "node_id": pending.get("node_id"),
                 "question": pending.get("question"),
                 "options": pending.get("options") or [],
+                # A timed gate's deadline travels with the row, so the list can show how
+                # long the reviewer still has instead of only how old the file is.
+                "waiting_since": pending.get("waiting_since"),
+                "timeout_minutes": pending.get("timeout_minutes"),
                 "error": state.get("error"),
                 "deliveries": state.get("deliveries") or [],
                 "updated": row["updated"],
@@ -264,7 +289,8 @@ def list_runs(limit: int = 20) -> dict:
 @router.get("/runs/{run_id}")
 def get_run(run_id: str) -> dict:
     """One stored run in the same shape a run/respond call returns (for reopening a run)."""
-    return _result(_load_run(run_id))
+    runs = _runs()
+    return _result(_settled(_load_run(run_id), runs))
 
 
 @router.post("/runs/{run_id}/respond")

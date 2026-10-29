@@ -131,6 +131,15 @@ def test_schedule_inspector_says_whether_hermes_has_the_job(source):
     assert 'TIPS["schedule.status"]' in source
 
 
+def test_approval_gate_takes_a_deadline(source):
+    """A gate that waits forever is the classic HITL failure; the inspector must offer one."""
+    assert 'field("timeout (minutes, optional)"' in source
+    assert 'field("if it times out", policy' in source
+    assert '"escalate \\u2014 flag it for someone else"' in source
+    assert "function waitText(pending)" in source, "the run box must show the remaining wait"
+    assert "expires in " in source and "-minute deadline" in source
+
+
 def test_runs_view_lists_every_run_and_answers_gates(source):
     """A run started in chat or by a cron job must be visible and answerable here too."""
     assert 'data-vw="view-runs"' in source

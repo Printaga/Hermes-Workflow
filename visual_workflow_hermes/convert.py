@@ -62,6 +62,10 @@ def build_run_plan(designer: dict) -> dict:
                 step["options"] = list(n["options"])
             if n.get("context"):
                 step["context"] = n["context"]
+            if n.get("timeout_minutes"):
+                step["timeout_minutes"] = int(n["timeout_minutes"])
+            if n.get("on_timeout"):
+                step["on_timeout"] = str(n["on_timeout"]).strip().lower()
         elif kind == "output":
             step["keys"] = after
             # Delivery is optional: an output that only collects stays exactly as before.

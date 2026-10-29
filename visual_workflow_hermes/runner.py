@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import operator
 import re
+import time
 
 COMPARATORS = {"==": operator.eq, "!=": operator.ne, ">": operator.gt,
                ">=": operator.ge, "<": operator.lt, "<=": operator.le}
@@ -176,9 +177,16 @@ def run_plan(plan: dict, state: dict, spawn=None, on_step=None, deliver=None) ->
                     continue
             elif kind == "approval":
                 state["status"] = "awaiting_approval"
-                state["pending"] = {"node_id": sid, "question": step.get("question", ""),
-                                    "options": step.get("options", []),
-                                    "context": step.get("context", "")}
+                pending = {"node_id": sid, "question": step.get("question", ""),
+                           "options": step.get("options", []),
+                           "context": step.get("context", ""),
+                           "waiting_since": time.time()}
+                # The timeout travels with the pause: check_timeouts(state) has no plan to
+                # consult, and a gate must be answerable long after the process is gone.
+                if step.get("timeout_minutes"):
+                    pending["timeout_minutes"] = int(step["timeout_minutes"])
+                    pending["on_timeout"] = str(step.get("on_timeout") or "reject")
+                state["pending"] = pending
                 if on_step:
                     on_step(state)
                 return state
@@ -219,11 +227,58 @@ def _deliver(deliver, step: dict, payload, run_name: str) -> dict:
     return {"node_id": step.get("id"), **outcome}
 
 
+def check_timeouts(state: dict, now=None) -> dict:
+    """Fail a paused approval whose timeout has passed; otherwise return *state* unchanged.
+
+    A human gate must never wait forever — the most-cited production failure in HITL designs.
+    The policy is applied when the gate parks (``timeout_minutes`` / ``on_timeout`` on the
+    pending element), so this needs no plan and works on a run reloaded from disk.
+
+    ``escalate`` records ``detail: "escalation requested"`` on the error and fails the same way
+    as ``reject``: re-routing to another reviewer is Phase 2, and pretending to escalate would be
+    the kind of dead control this plan exists to remove.
+    """
+    pending = state.get("pending") or {}
+    minutes = pending.get("timeout_minutes")
+    if state.get("status") != "awaiting_approval" or not minutes:
+        return state
+    started = float(pending.get("waiting_since") or 0)
+    moment = time.time() if now is None else float(now)
+    if moment - started <= float(minutes) * 60:
+        return state
+    policy = str(pending.get("on_timeout") or "reject")
+    error = {
+        "node_id": pending.get("node_id"),
+        "msg": f"approval timed out after {int(minutes)} min (policy: {policy})",
+    }
+    if policy == "escalate":
+        error["detail"] = "escalation requested"
+    state["status"] = "failed"
+    state["error"] = error
+    state["pending"] = None
+    return state
+
+
 def resume_plan(plan: dict, state: dict, answer, spawn=None, on_step=None, deliver=None) -> dict:
-    """Feed an approval answer / pending agent output back in, then keep running."""
+    """Feed an approval answer / pending agent output back in, then keep running.
+
+    A late answer is checked against the gate's timeout first: the run fails as timed out
+    instead of silently resuming as if the reviewer had been on time.
+    """
     pending = state.get("pending")
     if not pending:
+        # A run that already expired says so; "nothing to answer" would hide the reason.
+        error = state.get("error") or {}
+        if state.get("status") == "failed" and error.get("msg"):
+            if on_step:
+                on_step(state)  # idempotent: make sure the verdict is on disk
+            raise StepError(str(error["msg"]))
         raise StepError("run is not paused; nothing to answer")
+    check_timeouts(state)
+    if state.get("status") == "failed":
+        if on_step:
+            on_step(state)
+        raise StepError((state.get("error") or {}).get("msg") or "the approval gate timed out")
     node_id = pending["node_id"]
     step = next((s for s in plan["steps"] if s["id"] == node_id), None)
     if step is None:

@@ -8,6 +8,11 @@ TRIGGER_MODES = ("manual", "schedule", "webhook")
 # How an output node hands its payload on: to the platform's home channel ("notification") or
 # to an explicit <platform>:<chat> target ("channel"). Absent = collect only.
 DELIVER_MODES = ("notification", "channel")
+# A paused gate may carry a deadline; without one it waits forever, which the HITL literature
+# names as the most common production failure. Three days is the ceiling: longer is a design
+# error, not patience.
+ON_TIMEOUT = ("reject", "escalate")
+MAX_TIMEOUT_MINUTES = 4320
 MAX_NODES = 50
 
 # Conditions must reference upstream outputs in this form:
@@ -83,6 +88,25 @@ def validate_designer_graph(graph: dict) -> list[dict]:
                 elif str(deliver).strip().lower() == "channel" and ":" not in target:
                     errors.append({"node": nid, "field": "target",
                                    "msg": "a channel target needs <platform>:<chat id>"})
+        if kind == "approval":
+            timeout = n.get("timeout_minutes")
+            if timeout not in (None, ""):
+                try:
+                    minutes = int(timeout)
+                except (TypeError, ValueError):
+                    errors.append({"node": nid, "field": "timeout_minutes",
+                                   "msg": "timeout_minutes must be a whole number of minutes"})
+                else:
+                    if minutes <= 0 or minutes > MAX_TIMEOUT_MINUTES:
+                        errors.append({
+                            "node": nid, "field": "timeout_minutes",
+                            "msg": f"timeout_minutes must be 1..{MAX_TIMEOUT_MINUTES}",
+                        })
+            policy = n.get("on_timeout")
+            if policy not in (None, "") \
+                    and str(policy).strip().lower() not in ON_TIMEOUT:
+                errors.append({"node": nid, "field": "on_timeout",
+                               "msg": f"on_timeout must be one of {ON_TIMEOUT} or empty"})
         if kind == "condition" and n.get("expression") \
                 and not _WHEN_RE.match(str(n["expression"]).strip()):
             errors.append({"node": nid, "field": "expression",

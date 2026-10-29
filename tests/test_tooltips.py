@@ -42,6 +42,8 @@ OPTION_KEYS = (
     "condition.expression",
     "approval.question",
     "approval.options",
+    "approval.timeout",
+    "approval.on_timeout",
     "output.parents",
     "output.deliver",
     "output.target",

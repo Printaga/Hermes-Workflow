@@ -64,6 +64,8 @@
     "condition.expression": "A test like out.draft.word_count > 20 \u2014 start with out.<node>.<field>, then one of > >= < <= == !=.",
     "approval.question": "The question the person sees; the run waits here until they answer.",
     "approval.options": "Answers offered as buttons, comma separated (e.g. ship, edit); empty means free text.",
+    "approval.timeout": "How long to wait for a person before the gate expires, in minutes; empty waits forever.",
+    "approval.on_timeout": "What an expired gate does: reject fails the run, escalate flags it for a person.",
     "output.parents": "Steps whose results this output collects \u2014 connect an edge instead of typing here.",
     "output.deliver": "What to do with the results: collect only, notification to your home channel, or one specific chat.",
     "output.target": "Where to send it: platform:chat id like telegram:8522302999, or just the platform for its home channel.",
@@ -1089,6 +1091,32 @@
           },
           "ship, edit"
         ), TIPS["approval.options"]));
+        box.appendChild(field("timeout (minutes, optional)", textInput(
+          current.timeout_minutes ? String(current.timeout_minutes) : "",
+          function (v) {
+            var minutes = parseInt(v, 10);
+            if (!v.trim() || isNaN(minutes) || minutes <= 0) delete current.timeout_minutes;
+            else current.timeout_minutes = minutes;
+            draw();
+          },
+          "60"
+        ), TIPS["approval.timeout"]));
+        var policy = document.createElement("select");
+        policy.title = TIPS["approval.on_timeout"];
+        [["reject", "reject \u2014 fail the run"],
+         ["escalate", "escalate \u2014 flag it for someone else"]].forEach(function (pair) {
+          var option = document.createElement("option");
+          option.value = pair[0];
+          option.textContent = pair[1];
+          option.title = TIPS["approval.on_timeout"];
+          if ((current.on_timeout || "reject") === pair[0]) option.selected = true;
+          policy.appendChild(option);
+        });
+        policy.addEventListener("change", function () {
+          current.on_timeout = policy.value;
+          draw();
+        });
+        box.appendChild(field("if it times out", policy, TIPS["approval.on_timeout"]));
       } else if (current.type === "output") {
         var parents = document.createElement("p");
         parents.className = "vw-muted";
@@ -1308,6 +1336,29 @@
       }).join(" \u00b7 "), "vw-muted");
     }
 
+    /** "waiting 12m \u00b7 expires in 48m" for a timed gate; "" when it has no deadline. */
+    function waitText(pending) {
+      if (!pending || !pending.timeout_minutes) return "";
+      var since = Number(pending.waiting_since || 0) * 1000;
+      if (!since) return "";
+      var left = Number(pending.timeout_minutes) * 60000 - (Date.now() - since);
+      function span(ms) {
+        var minutes = Math.max(0, Math.round(ms / 60000));
+        return minutes >= 60 ? Math.round(minutes / 60) + "h" : minutes + "m";
+      }
+      return left > 0
+        ? "waiting " + span(Date.now() - since) + " \u00b7 expires in " + span(left)
+        : "past its " + pending.timeout_minutes + "-minute deadline";
+    }
+
+    function waitLine(pending) {
+      var text = waitText(pending);
+      if (!text) return null;
+      var node = line("p", text, "vw-hint");
+      node.title = TIPS["approval.timeout"];
+      return node;
+    }
+
     function renderRun(result) {
       lastRun = result;
       var box = el.run;
@@ -1319,6 +1370,8 @@
         var pending = result.pending || {};
         box.appendChild(line("h4", "gate " + pending.node_id + ": " + (pending.question || "")));
         if (pending.context) box.appendChild(line("pre", pending.context));
+        var wait = waitLine(pending);
+        if (wait) box.appendChild(wait);
         var options = pending.options || [];
         if (options.length) {
           var row = document.createElement("div");
@@ -1695,6 +1748,9 @@
             row.run_id + " \u00b7 " + when(row.updated))),
         isGate
           ? h("p", { className: "vw-hint" }, "gate " + row.node_id + ": " + (row.question || ""))
+          : null,
+        isGate && waitText(row)
+          ? h("p", { className: "vw-hint", title: TIPS["approval.timeout"] }, waitText(row))
           : null,
         isGate && !(row.options || []).length
           ? h("p", { className: "vw-hint" }, "This gate takes free text \u2014 answer it in chat.")

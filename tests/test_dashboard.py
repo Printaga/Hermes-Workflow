@@ -257,6 +257,55 @@ def test_runs_list_shows_a_gate_started_outside_this_tab(tmp_path, monkeypatch):
     assert detail["status"] == "done" and detail["outputs"]["out"] == {"gate": "ship"}
 
 
+def test_runs_list_sweeps_and_persists_an_expired_gate(tmp_path, monkeypatch):
+    """Nothing runs in the background, so reading a run must honour its deadline."""
+    client, _ = _client(tmp_path, monkeypatch)
+    _save_gate_design(client)
+    started = client.post("/api/plugins/visual-workflow/designs/gated/run").json()
+
+    path = tmp_path / "workflow-runs" / f"{started['run_id']}.json"
+    state = json.loads(path.read_text())
+    state["pending"]["timeout_minutes"] = 1
+    state["pending"]["waiting_since"] = 1_600_000_000  # long past
+    path.write_text(json.dumps(state))
+
+    listed = client.get("/api/plugins/visual-workflow/runs").json()["runs"]
+    (row,) = [r for r in listed if r["run_id"] == started["run_id"]]
+    assert row["status"] == "failed"
+    assert row["node_id"] is None and row["options"] == []
+    assert "timed out" in row["error"]["msg"]
+
+    # The verdict is on disk now: a late answer cannot silently resume the run.
+    assert json.loads(path.read_text())["status"] == "failed"
+    late = client.post(
+        f"/api/plugins/visual-workflow/runs/{started['run_id']}/respond",
+        json={"run_id": started["run_id"], "node_id": "gate", "answer": "ship"},
+    )
+    assert late.status_code == 409
+
+
+def test_runs_list_row_carries_a_timed_gates_deadline(tmp_path, monkeypatch):
+    """The list is where a waiting gate is actually seen, so it must carry the deadline."""
+    client, _ = _client(tmp_path, monkeypatch)
+    graph = {
+        "name": "timed",
+        "nodes": [
+            {"id": "trigger1", "type": "trigger", "trigger_mode": "manual", "after": []},
+            {"id": "gate", "type": "approval", "question": "Ship it?",
+             "options": ["ship"], "timeout_minutes": 45, "after": ["trigger1"]},
+        ],
+    }
+    assert client.post("/api/plugins/visual-workflow/designs/timed",
+                       json={"graph": graph}).json()["ok"] is True
+    started = client.post("/api/plugins/visual-workflow/designs/timed/run").json()
+    assert started["status"] == "awaiting_approval"
+
+    (row,) = [r for r in client.get("/api/plugins/visual-workflow/runs").json()["runs"]
+              if r["run_id"] == started["run_id"]]
+    assert row["timeout_minutes"] == 45
+    assert row["waiting_since"] > 0
+
+
 def test_runs_list_respects_a_limit_and_unknown_run_is_404(tmp_path, monkeypatch):
     client, _ = _client(tmp_path, monkeypatch)
     _save_gate_design(client)
@@ -338,6 +387,15 @@ def test_schedule_inspector_says_whether_hermes_has_the_job(entry):
     assert '"Hermes cron: "' in entry
     assert "not scheduled yet" in entry
     assert 'TIPS["schedule.status"]' in entry
+
+
+def test_entry_shows_a_gate_deadline(entry):
+    """A timed gate must say how long the reviewer has, on the card and in the list."""
+    assert 'field("timeout (minutes, optional)"' in entry
+    assert 'field("if it times out", policy' in entry
+    assert "function waitText(pending)" in entry
+    assert "expires in " in entry
+    assert "-minute deadline" in entry
 
 
 def test_entry_has_a_runs_view_that_answers_gates_inline(entry):

@@ -57,3 +57,21 @@ def test_rejects_bad_expression_self_ref_and_cycle():
         {"id": "b", "type": "agent", "prompt": "y", "after": ["a"]},
     ]}
     assert any("cycle" in e["msg"] for e in validate_designer_graph(cycle))
+
+
+def test_approval_timeout_and_policy_are_validated():
+    def graph(**approval):
+        node = {"id": "g", "type": "approval", "question": "ok?", "after": ["t"]}
+        node.update(approval)
+        return {"name": "g", "nodes": [
+            {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []}, node]}
+
+    assert validate_designer_graph(graph(timeout_minutes=30, on_timeout="reject")) == []
+    assert validate_designer_graph(graph(timeout_minutes="45", on_timeout="escalate")) == []
+    assert validate_designer_graph(graph()) == []
+
+    for bad in (0, -5, 4321, "soon"):
+        errors = validate_designer_graph(graph(timeout_minutes=bad))
+        assert any(e["field"] == "timeout_minutes" for e in errors), bad
+    bad_policy = validate_designer_graph(graph(on_timeout="retry"))
+    assert any(e["field"] == "on_timeout" for e in bad_policy)
