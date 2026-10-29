@@ -6,10 +6,10 @@ functions, no I/O, no Hermes imports — unit-testable standalone.
 
 Mapping:
   trigger   -> dropped; recorded in plan["meta"]["trigger"]
-  agent     -> {"kind": "agent", "prompt", ...passthrough model/provider/schema/inputs/timeout}
+  agent     -> {"kind": "agent", "prompt", ...passthrough profile/model/provider/schema/inputs/timeout}
   condition -> {"kind": "condition", "expression"}
   approval  -> {"kind": "approval", "question", "options"}
-  output    -> {"kind": "output", "keys": [<parent ids>]}  — collects parents' outputs
+  output    -> {"kind": "output", "keys": [<parent ids>], ...passthrough deliver/target}
   layout x/y -> dropped (widget-only, preserved in the designer JSON)
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ def build_run_plan(designer: dict) -> dict:
         step: dict = {"id": n.get("id"), "kind": kind, "after": after}
         if kind == "agent":
             step["prompt"] = n.get("prompt", "")
-            for key in ("model", "provider", "schema", "inputs", "timeout"):
+            for key in ("profile", "model", "provider", "schema", "inputs", "timeout"):
                 if n.get(key) is not None:
                     step[key] = n[key]
         elif kind == "condition":
@@ -64,6 +64,11 @@ def build_run_plan(designer: dict) -> dict:
                 step["context"] = n["context"]
         elif kind == "output":
             step["keys"] = after
+            # Delivery is optional: an output that only collects stays exactly as before.
+            if n.get("deliver"):
+                step["deliver"] = str(n["deliver"]).strip().lower()
+            if n.get("target"):
+                step["target"] = str(n["target"]).strip()
         steps.append(step)
     if not steps:
         raise ValueError("design has no executable nodes (only a trigger)")

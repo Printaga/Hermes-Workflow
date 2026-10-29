@@ -24,6 +24,8 @@ if str(_PLUGIN_ROOT) not in sys.path:
 from fastapi import APIRouter, Body, HTTPException  # noqa: E402
 
 from visual_workflow_hermes.convert import build_run_plan  # noqa: E402
+from visual_workflow_hermes.delivery import deliver_output  # noqa: E402
+from visual_workflow_hermes.profiles import list_host_profiles  # noqa: E402
 from visual_workflow_hermes.runner import StepError, new_state, resume_plan, run_plan  # noqa: E402
 from visual_workflow_hermes.schema import validate_designer_graph  # noqa: E402
 from visual_workflow_hermes.store import DesignStore, RunStore  # noqa: E402
@@ -60,6 +62,7 @@ def _result(state: dict) -> dict:
         "pending": state["pending"],
         "outputs": state["outputs"],
         "skipped": state["skipped"],
+        "deliveries": state.get("deliveries", []),
         "error": state["error"],
     }
 
@@ -80,6 +83,17 @@ def _load_run(run_id: str) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/profiles")
+def list_profiles() -> dict:
+    """Host profiles ("bots") for the agent-node picker.
+
+    Always 200: an empty list with ``available: false`` is the honest answer when the host
+    profile registry cannot be read, and the canvas falls back to a free-text field.
+    """
+    profiles = list_host_profiles()
+    return {"profiles": profiles, "available": bool(profiles)}
 
 
 @router.get("/designs")
@@ -146,7 +160,7 @@ def run_design(name: str) -> dict:
     runs = _runs()
     state = new_state(plan, run_id)
     runs.save(state)
-    state = run_plan(plan, state, spawn=None, on_step=runs.save)
+    state = run_plan(plan, state, spawn=None, on_step=runs.save, deliver=deliver_output)
     return _result(state)
 
 
@@ -169,7 +183,8 @@ def respond_run(run_id: str, payload: dict = Body(...)) -> dict:
         )
     try:
         plan = build_run_plan(_load_design(state["name"]))
-        state = resume_plan(plan, state, answer, spawn=None, on_step=runs.save)
+        state = resume_plan(plan, state, answer, spawn=None, on_step=runs.save,
+                            deliver=deliver_output)
     except (StepError, ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _result(state)

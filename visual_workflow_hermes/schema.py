@@ -5,6 +5,9 @@ import re
 
 NODE_KINDS = ("trigger", "agent", "condition", "approval", "output")
 TRIGGER_MODES = ("manual", "schedule", "webhook")
+# How an output node hands its payload on: to the platform's home channel ("notification") or
+# to an explicit <platform>:<chat> target ("channel"). Absent = collect only.
+DELIVER_MODES = ("notification", "channel")
 MAX_NODES = 50
 
 # Conditions must reference upstream outputs in this form:
@@ -66,6 +69,20 @@ def validate_designer_graph(graph: dict) -> list[dict]:
             elif dep == nid:
                 errors.append({"node": nid, "field": "after",
                                "msg": "node cannot depend on itself"})
+        if kind == "output":
+            deliver = n.get("deliver")
+            if deliver not in (None, "") and str(deliver).strip().lower() not in DELIVER_MODES:
+                errors.append({"node": nid, "field": "deliver",
+                               "msg": f"deliver must be one of {DELIVER_MODES} or empty"})
+            elif str(deliver or "").strip().lower() in DELIVER_MODES:
+                target = str(n.get("target") or "").strip()
+                if not target:
+                    errors.append({"node": nid, "field": "target",
+                                   "msg": f"deliver={deliver!r} needs a target "
+                                          "(e.g. 'telegram' or 'telegram:123456')"})
+                elif str(deliver).strip().lower() == "channel" and ":" not in target:
+                    errors.append({"node": nid, "field": "target",
+                                   "msg": "a channel target needs <platform>:<chat id>"})
         if kind == "condition" and n.get("expression") \
                 and not _WHEN_RE.match(str(n["expression"]).strip()):
             errors.append({"node": nid, "field": "expression",

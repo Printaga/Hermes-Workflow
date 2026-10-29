@@ -24,6 +24,13 @@ USAGE = (
 )
 
 
+def _deliver(step, payload, run_name):
+    """Output-node delivery through the host send seam (see ``delivery.py``)."""
+    from .delivery import deliver_output
+
+    return deliver_output(step, payload, run_name)
+
+
 def _subagent_spawn(ctx):
     """Return a spawn callable backed by ``ctx.subagent_lifecycle``, or None when unavailable.
 
@@ -38,14 +45,19 @@ def _subagent_spawn(ctx):
     def spawn(step, outputs, run):
         from agent.subagent_lifecycle import SubagentLaunchRequest
 
+        from .profiles import step_model_provider
         from .runner import render_context
 
+        # A chosen profile ("bot") supplies model/provider unless the node overrides them.
+        model, provider = step_model_provider(step)
+        metadata = {"workflow_profile": step["profile"]} if step.get("profile") else {}
         request = SubagentLaunchRequest(
             goal=step.get("prompt", ""),
             context=render_context(step, outputs),
-            model=step.get("model"),
-            provider=step.get("provider"),
+            model=model,
+            provider=provider,
             correlation_id=f"workflow:{run['run_id']}:{step['id']}",
+            metadata=metadata,
             timeout_seconds=step.get("timeout"),
         )
         handle = service.launch(request)
@@ -253,7 +265,7 @@ class WorkflowDesignerRuntime:
         state = new_state(plan, run_id)
         self._runs().save(state)
         state = run_plan(plan, state, spawn=_subagent_spawn(self.ctx),
-                         on_step=self._runs().save)
+                         on_step=self._runs().save, deliver=_deliver)
         return self._result(state)
 
     def tool_respond(self, args, **_) -> dict:
@@ -277,8 +289,8 @@ class WorkflowDesignerRuntime:
                     "error": f"run {run_id!r} is not waiting on {node_id!r}"}
         try:
             plan = build_run_plan(self._store().load(state["name"]))
-            state = resume_plan(plan, state, answer,
-                                spawn=_subagent_spawn(self.ctx), on_step=self._runs().save)
+            state = resume_plan(plan, state, answer, spawn=_subagent_spawn(self.ctx),
+                                on_step=self._runs().save, deliver=_deliver)
         except (StepError, ValueError, FileNotFoundError) as exc:
             return {"ok": False, "error": str(exc)}
         return self._result(state)
@@ -292,5 +304,6 @@ class WorkflowDesignerRuntime:
             "pending": state["pending"],
             "outputs": state["outputs"],
             "skipped": state["skipped"],
+            "deliveries": state.get("deliveries", []),
             "error": state["error"],
         }

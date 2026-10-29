@@ -74,14 +74,16 @@ def evaluate_condition(expression: str, outputs: dict, node_ids) -> bool:
     return bool(COMPARATORS[op](left, _coerce(literal)))
 
 
-def run_plan(plan: dict, state: dict, spawn=None, on_step=None) -> dict:
+def run_plan(plan: dict, state: dict, spawn=None, on_step=None, deliver=None) -> dict:
     """Advance *state* through *plan* until it finishes or pauses.
 
     *state* is ``{"run_id", "name", "cursor", "status", "outputs", "skipped", "pending",
-    "error", "answers"}``. ``cursor`` is the index of the next step, so resuming is a matter of
-    calling again with the same state. ``spawn`` runs an agent step; when it is None an agent
-    step pauses the run for the host to perform. ``on_step(state)`` is called after each
-    completed step (used to persist).
+    "error", "answers", "deliveries"}``. ``cursor`` is the index of the next step, so resuming
+    is a matter of calling again with the same state. ``spawn`` runs an agent step; when it is
+    None an agent step pauses the run for the host to perform. ``on_step(state)`` is called
+    after each completed step (used to persist). ``deliver(step, payload, run_name)`` sends an
+    output node's payload somewhere; when it is None an output only collects. A delivery that
+    fails is recorded in ``state["deliveries"]`` and does NOT fail the run.
     """
     steps = plan["steps"]
     node_ids = {s["id"] for s in steps}
@@ -124,7 +126,12 @@ def run_plan(plan: dict, state: dict, spawn=None, on_step=None) -> dict:
                     on_step(state)
                 return state
             elif kind == "output":
-                state["outputs"][sid] = {k: state["outputs"].get(k) for k in step.get("keys", [])}
+                payload = {k: state["outputs"].get(k) for k in step.get("keys", [])}
+                state["outputs"][sid] = payload
+                if deliver is not None and step.get("deliver"):
+                    state.setdefault("deliveries", []).append(
+                        _deliver(deliver, step, payload, plan.get("name", ""))
+                    )
             else:
                 raise StepError(f"unknown step kind {kind!r}")
         except StepError as exc:
@@ -141,7 +148,16 @@ def run_plan(plan: dict, state: dict, spawn=None, on_step=None) -> dict:
     return state
 
 
-def resume_plan(plan: dict, state: dict, answer, spawn=None, on_step=None) -> dict:
+def _deliver(deliver, step: dict, payload, run_name: str) -> dict:
+    """Call the delivery hook, stamped with the node it belongs to. Never raises."""
+    try:
+        outcome = deliver(step, payload, run_name) or {}
+    except Exception as exc:  # a delivery problem is data, not a run failure
+        outcome = {"ok": False, "detail": f"delivery error: {exc}"}
+    return {"node_id": step.get("id"), **outcome}
+
+
+def resume_plan(plan: dict, state: dict, answer, spawn=None, on_step=None, deliver=None) -> dict:
     """Feed an approval answer / pending agent output back in, then keep running."""
     pending = state.get("pending")
     if not pending:
@@ -161,9 +177,10 @@ def resume_plan(plan: dict, state: dict, answer, spawn=None, on_step=None) -> di
     state["cursor"] += 1
     state["pending"] = None
     state["status"] = "running"
-    return run_plan(plan, state, spawn=spawn, on_step=on_step)
+    return run_plan(plan, state, spawn=spawn, on_step=on_step, deliver=deliver)
 
 
 def new_state(plan: dict, run_id: str) -> dict:
     return {"run_id": run_id, "name": plan["name"], "cursor": 0, "status": "running",
-            "outputs": {}, "skipped": [], "pending": None, "error": None, "answers": {}}
+            "outputs": {}, "skipped": [], "pending": None, "error": None, "answers": {},
+            "deliveries": []}
