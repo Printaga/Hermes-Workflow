@@ -52,11 +52,6 @@ OPTION_KEYS = (
 
 REQUIRED = KIND_KEYS + OPTION_KEYS
 
-# Keys whose tip is chosen at render time (``TIPS["presets." + name]``) or only used on the
-# surfaces that can fetch a channel list, so a literal reference is not expected everywhere.
-DEFAULT_KEYS = ("schedules.pause", "schedules.resume", "schedules.run", "schedules.remove",
-                "schedules.create", "schedule.save")
-
 
 def _read(path: Path) -> str:
     assert path.is_file(), f"missing canvas at {path}"
@@ -127,6 +122,28 @@ def test_each_option_reference_uses_the_table(surface):
         assert literal in source or prefixed in source or parent in source, (
             f"{name}: inspector option {key!r} declares a tip but never applies it"
         )
+
+
+def test_no_surface_declares_a_tip_it_never_shows(surface):
+    """A tip for a control this canvas does not have is dead text, not documentation.
+
+    This is how the standalone widget kept five `schedules.*` sentences for a job list it
+    cannot render: harmless-looking, and the reason a copy's TIPS table stopped meaning
+    "what this surface explains".
+    """
+    name, source = surface
+    dead = []
+    for key in _tips(source):
+        stem = key.split(".")[0]
+        applied = (
+            f'TIPS["{key}"]' in source
+            or f'TIPS["{key}.' in source            # a more specific tip, e.g. output.target.custom
+            or f'TIPS["{key.rsplit(".", 1)[0]}"]' in source  # the parent's tip is reused
+            or f'TIPS["{stem}."' in source          # chosen at render time, e.g. "presets." + name
+        )
+        if not applied:
+            dead.append(key)
+    assert not dead, f"{name}: tooltips declared but never shown: {dead}"
 
 
 def test_inspector_field_helper_carries_a_tip(surface):

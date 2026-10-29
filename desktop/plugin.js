@@ -72,11 +72,12 @@ const TIPS = {
   "schedules.pause": "Stop the schedule from firing; the saved workflow is untouched.",
   "schedules.resume": "Let the schedule fire again.",
   "schedules.run": "Run the workflow once now, without waiting for the next time.",
-  "schedules.remove": "Delete the cron job; the saved workflow stays.",    "schedules.create": "Create or update the Hermes cron job for the chosen workflow.",
-    "schedule.status": "Whether Hermes really has a cron job for this workflow, and when it next fires.",
+  "schedules.remove": "Delete the cron job; the saved workflow stays.",
+  "schedules.create": "Create or update the Hermes cron job for the chosen workflow.",
+  "schedule.status": "Whether Hermes really has a cron job for this workflow, and when it next fires.",
   "runs.approve": "Answer this gate now; the run resumes from where it stopped.",
-    "runs.open": "Open the saved workflow this run belongs to.",
-    "runs.refresh": "Re-read the runs saved on this machine, newest first.",
+  "runs.open": "Open the saved workflow this run belongs to.",
+  "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
 
 // ---- friendly scheduler helpers (mirror visual_workflow_hermes/schedule.py) ----
