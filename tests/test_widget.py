@@ -181,6 +181,12 @@ def test_canvas_fits_its_width_and_recomputes_on_resize(html):
     assert "fitLocked" in html
 
 
+def test_agent_node_offers_a_retry_budget(html):
+    assert 'field("retries (optional)"' in html
+    assert 'TIPS["agent.retries"]' in html
+    assert "current.retries = Math.min(3, count)" in html
+
+
 # ------------------------------------------------------------ sticky notes
 # A note is information for the person reading the canvas: it has no ports, never reaches
 # the run plan, and must never be asked for a trigger's fields.

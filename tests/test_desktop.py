@@ -287,6 +287,12 @@ def test_canvas_fits_its_width_and_recomputes_on_resize(source):
     assert "fitLocked" in source
 
 
+def test_agent_node_offers_a_retry_budget(source):
+    assert 'field("retries (optional)"' in source
+    assert 'TIPS["agent.retries"]' in source
+    assert "current.retries = Math.min(3, count)" in source
+
+
 # ------------------------------------------------------------ sticky notes
 def test_desktop_offers_sticky_notes_as_annotations(source):
     assert 'data-kind="note"' in source

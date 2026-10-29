@@ -142,6 +142,14 @@ def test_converting_leaves_the_notes_where_they_were():
         "mint condition", "green", 128, 64)
 
 
+def test_agent_retries_survive_into_the_plan():
+    designer = {"name": "r", "nodes": [
+        {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "a", "type": "agent", "prompt": "p", "retries": 2, "after": ["t"]},
+    ]}
+    assert build_run_plan(designer)["steps"][0]["retries"] == 2
+
+
 def test_approval_timeout_survives_into_the_plan():
     designer = {"name": "gated", "nodes": [
         {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},

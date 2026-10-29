@@ -109,6 +109,21 @@ def test_note_colour_is_checked_against_the_known_set():
                for e in validate_designer_graph(graph(color="chartreuse")))
 
 
+def test_agent_retries_are_optional_and_capped():
+    def graph(**agent):
+        node = {"id": "a", "type": "agent", "prompt": "x", "after": ["t"]}
+        node.update(agent)
+        return {"name": "r", "nodes": [
+            {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []}, node]}
+
+    assert validate_designer_graph(graph()) == []
+    for good in (0, 2, "3"):
+        assert validate_designer_graph(graph(retries=good)) == [], good
+    for bad in (-1, 4, "lots"):
+        errors = validate_designer_graph(graph(retries=bad))
+        assert any(e["field"] == "retries" for e in errors), bad
+
+
 def test_notes_do_not_hide_a_real_cycle():
     graph = {"name": "c", "nodes": [
         {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},

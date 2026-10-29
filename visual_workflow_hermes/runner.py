@@ -17,6 +17,9 @@ _HEAD_RE = re.compile(r"^out\.(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$")
 PAUSED = ("awaiting_approval", "awaiting_agent")
 # One upstream output is injected as one block; a long draft must not eat the agent's context.
 MAX_CONTEXT_CHARS = 4000
+# A transient agent failure may be retried; three extra attempts is the ceiling (schema rejects
+# more), because a step that fails four times is a design defect, not bad luck.
+MAX_RETRIES = 3
 _TRUNCATED = "\n[\u2026 truncated {n} chars \u2026]"
 
 
@@ -132,6 +135,32 @@ def evaluate_condition(expression: str, outputs: dict, node_ids) -> bool:
         ) from exc
 
 
+def _spawn_with_retries(spawn, step: dict, state: dict) -> dict:
+    """Run one agent step, retrying a transient failure up to ``step["retries"]`` times.
+
+    Only agent steps retry. Re-asking a human gate is not a retry (it is the same unanswered
+    question), and a condition expression is deterministic — retrying either would hide the
+    defect instead of surviving a flaky model call. ``state["attempts"]`` records how many
+    tries the node took, so a run result can explain itself.
+    """
+    try:
+        budget = max(0, min(MAX_RETRIES, int(step.get("retries") or 0)))
+    except (TypeError, ValueError):  # a hand-written JSON is data, not a crash
+        budget = 0
+    attempts = 0
+    while True:
+        attempts += 1
+        state.setdefault("attempts", {})[step["id"]] = attempts
+        try:
+            produced = spawn(step, state["outputs"], state) or {}
+            if produced.get("error"):
+                raise StepError(str(produced["error"]))
+            return produced
+        except StepError:
+            if attempts > budget:
+                raise
+
+
 def run_plan(plan: dict, state: dict, spawn=None, on_step=None, deliver=None) -> dict:
     """Advance *state* through *plan* until it finishes or pauses.
 
@@ -164,9 +193,7 @@ def run_plan(plan: dict, state: dict, spawn=None, on_step=None, deliver=None) ->
                     if on_step:
                         on_step(state)
                     return state
-                produced = spawn(step, state["outputs"], state)
-                if produced.get("error"):
-                    raise StepError(str(produced["error"]))
+                produced = _spawn_with_retries(spawn, step, state)
                 state["outputs"][sid] = produced.get("structured") or produced.get("output", "")
             elif kind == "condition":
                 if not evaluate_condition(step["expression"], state["outputs"], node_ids):
@@ -300,4 +327,4 @@ def resume_plan(plan: dict, state: dict, answer, spawn=None, on_step=None, deliv
 def new_state(plan: dict, run_id: str) -> dict:
     return {"run_id": run_id, "name": plan["name"], "cursor": 0, "status": "running",
             "outputs": {}, "skipped": [], "pending": None, "error": None, "answers": {},
-            "deliveries": []}
+            "deliveries": [], "attempts": {}}

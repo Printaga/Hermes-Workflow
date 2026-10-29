@@ -51,8 +51,8 @@ const TIPS = {
   "trigger.schedule": "The cron expression actually saved: minute hour day-of-month month weekday \u2014 0 9 * * 1-5 is 09:00 Monday to Friday.",
   "agent.prompt": "What this step should do; the reply becomes out.<node>.text for later steps.",
   "agent.profile": "Which bot runs the step; host default uses the bot you have active.",
-  "agent.model": "Model override for this step only; empty keeps the bot's own model.",
-  "agent.provider": "Provider override for this step only; empty keeps the bot's own provider.",
+  "agent.model": "Model override for this step only; empty keeps the bot's own model.",    "agent.provider": "Provider override for this step only; empty keeps the bot's own provider.",
+    "agent.retries": "How many extra tries the step gets when the bot fails before the run gives up (0 to 3).",
   "condition.expression": "A test like out.draft.word_count > 20 \u2014 start with out.<node>.<field>, then one of > >= < <= == !=.",
   "approval.question": "The question the person sees; the run waits here until they answer.",
   "approval.options": "Answers offered as buttons, comma separated (e.g. ship, edit); empty means free text.",
@@ -1187,6 +1187,16 @@ function createDesigner(host, call) {
       box.appendChild(field("provider (optional)", textInput(current.provider || "", (v) => {
         current.provider = v;
       }), TIPS["agent.provider"]));
+      box.appendChild(field("retries (optional)", textInput(
+        current.retries ? String(current.retries) : "",
+        (v) => {
+          const count = parseInt(v, 10);
+          if (!v.trim() || isNaN(count) || count <= 0) delete current.retries;
+          else current.retries = Math.min(3, count);
+          draw();
+        },
+        "0"
+      ), TIPS["agent.retries"]));
     } else if (current.type === "condition") {
       box.appendChild(field("expression", textInput(current.expression || "", (v) => {
         current.expression = v;

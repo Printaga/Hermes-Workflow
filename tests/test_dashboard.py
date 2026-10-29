@@ -540,6 +540,13 @@ def test_canvas_fits_its_width_and_recomputes_on_resize(entry):
     assert "fitLocked" in entry, "a drag must not rescale the sheet under the pointer"
 
 
+def test_agent_node_offers_a_retry_budget(entry):
+    """A flaky model call should not fail the whole run; the inspector owns the budget."""
+    assert 'field("retries (optional)"' in entry
+    assert 'TIPS["agent.retries"]' in entry
+    assert "current.retries = Math.min(3, count)" in entry, "the schema caps retries at 3"
+
+
 # ------------------------------------------------------------ sticky notes
 def test_dashboard_offers_sticky_notes_as_annotations(entry):
     assert 'data-kind="note"' in entry

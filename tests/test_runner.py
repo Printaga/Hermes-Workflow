@@ -8,6 +8,73 @@ def _plan(*steps):
     return {"name": "t", "steps": list(steps), "meta": {}}
 
 
+# -- retry on failure -------------------------------------------------------
+# Only agent steps retry. A human gate re-asked by a machine is not a retry, and a pure
+# expression is deterministic — retrying either would hide the defect instead of fixing it.
+
+def test_a_flaky_agent_step_retries_once_then_succeeds():
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p", "retries": 1})
+    calls = {"n": 0}
+
+    def spawn(step, outputs, state):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise StepError("transient")
+        return {"output": "second time"}
+
+    state = run_plan(plan, new_state(plan, "retry1"), spawn=spawn)
+    assert state["status"] == "done"
+    assert state["outputs"]["a"] == "second time"
+    assert calls["n"] == 2
+    assert state["attempts"] == {"a": 2}, "the run must say how many attempts it took"
+
+
+def test_a_returned_error_counts_as_a_failure_too():
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p", "retries": 2})
+    outcomes = [{"error": "boom"}, {"error": "boom"}, {"output": "ok"}]
+    state = run_plan(plan, new_state(plan, "retry2"), spawn=lambda s, o, st: outcomes.pop(0))
+    assert state["status"] == "done"
+    assert state["outputs"]["a"] == "ok"
+    assert state["attempts"] == {"a": 3}
+
+
+def test_without_retries_the_first_failure_fails_the_run_as_before():
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    calls = {"n": 0}
+
+    def spawn(step, outputs, state):
+        calls["n"] += 1
+        raise StepError("transient")
+
+    state = run_plan(plan, new_state(plan, "retry3"), spawn=spawn)
+    assert state["status"] == "failed"
+    assert state["error"] == {"node_id": "a", "msg": "transient"}
+    assert calls["n"] == 1
+
+
+def test_an_exhausted_retry_budget_reports_the_last_error():
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p", "retries": 2})
+    calls = {"n": 0}
+
+    def spawn(step, outputs, state):
+        calls["n"] += 1
+        raise StepError(f"attempt {calls['n']} failed")
+
+    state = run_plan(plan, new_state(plan, "retry4"), spawn=spawn)
+    assert state["status"] == "failed"
+    assert calls["n"] == 3, "one try plus two retries"
+    assert state["error"]["msg"] == "attempt 3 failed"
+    assert state["attempts"] == {"a": 3}
+
+
+def test_a_non_agent_step_never_retries_even_with_the_field_set():
+    plan = _plan({"id": "c", "kind": "condition", "after": [], "retries": 3,
+                  "expression": "out.ghost.n > 1"})
+    state = run_plan(plan, new_state(plan, "retry5"), spawn=lambda s, o, st: {"output": "x"})
+    assert state["status"] == "failed"
+    assert state["attempts"] == {}, "only agent steps record attempts"
+
+
 # -- runner unit tests ------------------------------------------------------
 
 def test_agent_outputs_feed_a_true_condition_and_reach_the_output():

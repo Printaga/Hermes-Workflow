@@ -38,6 +38,7 @@ OPTION_KEYS = (
     "agent.profile",
     "agent.model",
     "agent.provider",
+    "agent.retries",
     "condition.expression",
     "approval.question",
     "approval.options",

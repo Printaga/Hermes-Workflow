@@ -58,7 +58,8 @@ def build_run_plan(designer: dict) -> dict:
         step: dict = {"id": n.get("id"), "kind": kind, "after": after}
         if kind == "agent":
             step["prompt"] = n.get("prompt", "")
-            for key in ("profile", "model", "provider", "schema", "inputs", "timeout"):
+            for key in ("profile", "model", "provider", "schema", "inputs", "timeout",
+                        "retries"):
                 if n.get(key) is not None:
                     step[key] = n[key]
         elif kind == "condition":

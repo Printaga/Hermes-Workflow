@@ -25,6 +25,8 @@ DELIVER_MODES = ("notification", "channel")
 # error, not patience.
 ON_TIMEOUT = ("reject", "escalate")
 MAX_TIMEOUT_MINUTES = 4320
+# A transient agent failure is worth re-trying; a step that fails four times is a design defect.
+MAX_RETRIES = 3
 MAX_NODES = 50
 
 # Conditions must reference upstream outputs in this form:
@@ -116,6 +118,18 @@ def validate_designer_graph(graph: dict) -> list[dict]:
                 elif str(deliver).strip().lower() == "channel" and ":" not in target:
                     errors.append({"node": nid, "field": "target",
                                    "msg": "a channel target needs <platform>:<chat id>"})
+        if kind == "agent":
+            retries = n.get("retries")
+            if retries not in (None, ""):
+                try:
+                    count = int(retries)
+                except (TypeError, ValueError):
+                    errors.append({"node": nid, "field": "retries",
+                                   "msg": "retries must be a whole number of extra attempts"})
+                else:
+                    if count < 0 or count > MAX_RETRIES:
+                        errors.append({"node": nid, "field": "retries",
+                                       "msg": f"retries must be 0..{MAX_RETRIES}"})
         if kind == "approval":
             timeout = n.get("timeout_minutes")
             if timeout not in (None, ""):
