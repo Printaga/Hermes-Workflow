@@ -85,6 +85,9 @@
     "schedules.run": "Run the workflow once now, without waiting for the next time.",
     "schedules.remove": "Delete the cron job; the saved workflow stays.",
     "schedules.create": "Create or update the Hermes cron job for the chosen workflow.",
+    "runs.approve": "Answer this gate now; the run resumes from where it stopped.",
+    "runs.open": "Open the saved workflow this run belongs to.",
+    "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
 
   // ---- friendly scheduler helpers (mirror visual_workflow_hermes/schedule.py) ----
@@ -1578,6 +1581,115 @@
       picker);
   }
 
+  // ---------------------------------------------------------------- runs view
+  /**
+   * Every run saved on disk, newest first — not just the one this tab started.
+   *
+   * A run begun by the chat tool, a cron job or another browser was previously invisible and
+   * unanswerable here; a paused gate now offers its options inline so it can be answered from
+   * the list without reopening the design.
+   */
+  function RunsPanel(props) {
+    var [runs, setRuns] = useState([]);
+    var [note, setNote] = useState("");
+    var [busy, setBusy] = useState("");
+
+    var fresh = useCallback(function () {
+      return fetchJSON(API + "/runs?limit=20").then(function (data) {
+        setRuns((data && data.runs) || []);
+      }).catch(function (err) {
+        setNote(explain(err));
+      });
+    }, []);
+
+    useEffect(function () {
+      fresh();
+    }, [fresh]);
+
+    function answer(row, option) {
+      setBusy(row.run_id);
+      setNote("resuming \u2026");
+      fetchJSON(API + "/runs/" + encodeURIComponent(row.run_id) + "/respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_id: row.run_id, node_id: row.node_id, answer: option }),
+      }).then(function (data) {
+        setBusy("");
+        setNote(row.run_id + ": " + ((data && data.status) || "no status"));
+        fresh();
+      }).catch(function (err) {
+        setBusy("");
+        setNote(explain(err));
+      });
+    }
+
+    /** "3m ago" — the row has to say how old a waiting gate is. */
+    function when(seconds) {
+      var age = Math.max(0, Math.round(Date.now() / 1000 - Number(seconds || 0)));
+      if (age < 60) return age + "s ago";
+      if (age < 3600) return Math.round(age / 60) + "m ago";
+      if (age < 86400) return Math.round(age / 3600) + "h ago";
+      return Math.round(age / 86400) + "d ago";
+    }
+
+    var rows = runs.map(function (row) {
+      var isGate = row.status === "awaiting_approval";
+      var isAgent = row.status === "awaiting_agent";
+      var actions = [];
+      if (isGate) {
+        (row.options || []).forEach(function (option) {
+          actions.push(h("button", {
+            key: "opt-" + option, type: "button", className: "vw-pill",
+            title: TIPS["runs.approve"], disabled: busy === row.run_id,
+            onClick: function () { answer(row, option); },
+          }, option));
+        });
+      }
+      actions.push(h("button", {
+        key: "open", type: "button", className: "vw-pill", title: TIPS["runs.open"],
+        onClick: function () { props.onOpen(row.name); },
+      }, "Open"));
+      return h("div", { key: row.run_id, className: "vw-job" },
+        h("div", { className: "vw-job-head" },
+          h("strong", null, row.name || "(unnamed)"),
+          h("span", { className: "vw-muted" }, " \u00b7 " + row.status + " \u00b7 " +
+            row.run_id + " \u00b7 " + when(row.updated))),
+        isGate
+          ? h("p", { className: "vw-hint" }, "gate " + row.node_id + ": " + (row.question || ""))
+          : null,
+        isGate && !(row.options || []).length
+          ? h("p", { className: "vw-hint" }, "This gate takes free text \u2014 answer it in chat.")
+          : null,
+        isAgent
+          ? h("p", { className: "vw-hint" },
+              "agent step " + row.node_id + " is waiting \u2014 answer it in chat.")
+          : null,
+        row.error
+          ? h("p", { className: "vw-error" },
+              (row.error.node_id ? row.error.node_id + ": " : "") + (row.error.msg || ""))
+          : null,
+        (row.deliveries || []).length
+          ? h("p", { className: "vw-hint" }, "delivery: " + row.deliveries.map(function (d) {
+              return (d.ok ? "sent " : "FAILED ") + d.node_id + " \u2192 " + (d.target || "?");
+            }).join(" \u00b7 "))
+          : null,
+        h("div", { className: "vw-job-actions" }, actions));
+    });
+
+    return h("div", { className: "vw-sched" },
+      h("p", { className: "vw-rail-title" }, "Runs"),
+      h("p", { className: "vw-hint" },
+        "Every run saved on this machine, newest first \u2014 including runs started in chat " +
+        "or by a schedule."),
+      rows.length ? h("div", { className: "vw-list" }, rows)
+        : h("p", { className: "vw-muted" }, "No runs yet."),
+      note ? h("p", { className: "vw-hint" }, note) : null,
+      h("button", {
+        type: "button", className: "vw-pill", title: TIPS["runs.refresh"],
+        onClick: function () { fresh(); },
+      }, "Refresh"));
+  }
+
   // ---------------------------------------------------------------- React tab
   function WorkflowsTab() {
     var hostRef = useRef(null);
@@ -1653,6 +1765,11 @@
           onClick: function () { setView("designer"); },
         }, "Designer"),
         h("button", {
+          key: "runs", type: "button", className: "vw-pill",
+          "aria-pressed": view === "runs" ? "true" : "false",
+          onClick: function () { setView("runs"); },
+        }, "Runs"),
+        h("button", {
           key: "schedules", type: "button", className: "vw-pill",
           "aria-pressed": view === "schedules" ? "true" : "false",
           onClick: function () { setView("schedules"); },
@@ -1682,7 +1799,15 @@
       h("div", { className: "vw-rail" }, rail),
       view === "schedules"
         ? h("div", { className: "vw-stage vw-stage-sched" }, h(SchedulesPanel, { designs: designs }))
-        : h("div", { className: "vw-stage", ref: hostRef })
+        : view === "runs"
+          ? h("div", { className: "vw-stage vw-stage-sched" }, h(RunsPanel, {
+              onOpen: function (name) {
+                if (!name) return;
+                open(name);
+                setView("designer");
+              },
+            }))
+          : h("div", { className: "vw-stage", ref: hostRef })
     );
   }
 

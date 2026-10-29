@@ -145,6 +145,11 @@ def run_plan(plan: dict, state: dict, spawn=None, on_step=None, deliver=None) ->
             on_step(state)
     state["status"] = "done"
     state["pending"] = None
+    # Terminal states must be persisted too: the loop's per-step save happens before the
+    # cursor advances past the last step, so without this the stored run stays "running"
+    # forever and a reloaded run can never be shown as finished.
+    if on_step:
+        on_step(state)
     return state
 
 

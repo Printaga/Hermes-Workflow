@@ -56,3 +56,30 @@ def test_save_overwrites_same_name_only(tmp_path):
     s.save("demo", _graph("second"))
     assert s.load("demo")["name"] == "second"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["demo.json"]
+
+
+# -- run history ------------------------------------------------------------
+def test_run_store_recent_is_newest_first_and_limited(tmp_path):
+    import os
+
+    from visual_workflow_hermes.store import RunStore
+
+    runs = RunStore(root=tmp_path)
+    for index, run_id in enumerate(("aaaaaa01", "aaaaaa02", "aaaaaa03")):
+        runs.save({"run_id": run_id, "name": "demo", "status": "done"})
+        path = tmp_path / f"{run_id}.json"
+        os.utime(path, (1_700_000_000 + index * 60, 1_700_000_000 + index * 60))
+
+    assert [r["run_id"] for r in runs.recent()] == ["aaaaaa03", "aaaaaa02", "aaaaaa01"]
+    assert [r["run_id"] for r in runs.recent(limit=1)] == ["aaaaaa03"]
+
+
+def test_run_store_recent_skips_corrupt_and_foreign_files(tmp_path):
+    from visual_workflow_hermes.store import RunStore
+
+    runs = RunStore(root=tmp_path)
+    runs.save({"run_id": "bbbbbb01", "name": "demo", "status": "awaiting_approval"})
+    (tmp_path / "bbbbbb02.json").write_text("{not json")
+    (tmp_path / "notes.json").write_text("{\"status\": \"done\"}")
+    rows = runs.recent()
+    assert [r["run_id"] for r in rows] == ["bbbbbb01"]

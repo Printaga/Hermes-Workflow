@@ -70,9 +70,11 @@ const TIPS = {
   "schedules.pause": "Stop the schedule from firing; the saved workflow is untouched.",
   "schedules.resume": "Let the schedule fire again.",
   "schedules.run": "Run the workflow once now, without waiting for the next time.",
-  "schedules.remove": "Delete the cron job; the saved workflow stays.",
-  "schedules.create": "Create or update the Hermes cron job for the chosen workflow.",
-};
+  "schedules.remove": "Delete the cron job; the saved workflow stays.",    "schedules.create": "Create or update the Hermes cron job for the chosen workflow.",
+    "runs.approve": "Answer this gate now; the run resumes from where it stopped.",
+    "runs.open": "Open the saved workflow this run belongs to.",
+    "runs.refresh": "Re-read the runs saved on this machine, newest first.",
+  };
 
 // ---- friendly scheduler helpers (mirror visual_workflow_hermes/schedule.py) ----
 const PRESETS = ["daily", "weekdays", "weekly", "hourly", "custom"];
@@ -288,6 +290,7 @@ const TEMPLATE =
   '<div class="vw-rail">' +
   '  <div class="vw-views">' +
   '    <button class="vw-pill" type="button" data-vw="view-designer" aria-pressed="true">Designer</button>' +
+  '    <button class="vw-pill" type="button" data-vw="view-runs" aria-pressed="false">Runs</button>' +
   '    <button class="vw-pill" type="button" data-vw="view-schedules" aria-pressed="false">Schedules</button>' +
   "  </div>" +
   '  <p class="vw-rail-title">Saved workflows</p>' +
@@ -296,6 +299,7 @@ const TEMPLATE =
   '  <p class="vw-error" data-vw="rail-error"></p>' +
   "</div>" +  '  <div class="vw-stage">' +
   '  <div class="vw-sched" data-vw="sched" hidden></div>' +
+  '  <div class="vw-sched" data-vw="runs" hidden></div>' +
   '  <div class="vw-app">' +
   '    <div class="vw-bar">' +
   '      <input class="vw-grow" data-vw="name" type="text" value="untitled" aria-label="design name">' +
@@ -384,6 +388,7 @@ function createDesigner(host, call) {
   const el = {
     app: q(".vw-app"),
     sched: q('[data-vw="sched"]'),
+    runs: q('[data-vw="runs"]'),
     designs: q('[data-vw="designs"]'),
     railError: q('[data-vw="rail-error"]'),
     name: q('[data-vw="name"]'),
@@ -1192,12 +1197,142 @@ function createDesigner(host, call) {
   let schedCron = "";
 
   function showView(next) {
-    view = next === "schedules" ? "schedules" : "designer";
-    el.app.hidden = view === "schedules";
+    view = next === "schedules" || next === "runs" ? next : "designer";
+    el.app.hidden = view !== "designer";
     el.sched.hidden = view !== "schedules";
-    q('[data-vw="view-designer"]').setAttribute("aria-pressed", view === "designer" ? "true" : "false");
-    q('[data-vw="view-schedules"]').setAttribute("aria-pressed", view === "schedules" ? "true" : "false");
+    el.runs.hidden = view !== "runs";
+    ["designer", "runs", "schedules"].forEach(function (name) {
+      q('[data-vw="view-' + name + '"]').setAttribute(
+        "aria-pressed", view === name ? "true" : "false");
+    });
     if (view === "schedules") renderSchedules();
+    if (view === "runs") renderRuns();
+  }
+
+  /** "3m ago" — a waiting gate has to say how long it has waited. */
+  function ageText(seconds) {
+    const age = Math.max(0, Math.round(Date.now() / 1000 - Number(seconds || 0)));
+    if (age < 60) return age + "s ago";
+    if (age < 3600) return Math.round(age / 60) + "m ago";
+    if (age < 86400) return Math.round(age / 3600) + "h ago";
+    return Math.round(age / 86400) + "d ago";
+  }
+
+  /**
+   * Every run saved on disk, newest first \u2014 including runs the chat tool or a cron job
+   * started, which this page used to be unable to see or answer.
+   */
+  function renderRuns() {
+    call("/runs?limit=20").then((data) => {
+      const runs = (data && data.runs) || [];
+      const box = el.runs;
+      box.textContent = "";
+      const title = document.createElement("p");
+      title.className = "vw-rail-title";
+      title.textContent = "Runs";
+      box.appendChild(title);
+      const hint = document.createElement("p");
+      hint.className = "vw-hint";
+      hint.textContent = "Every run saved on this machine, newest first \u2014 including runs " +
+        "started in chat or by a schedule.";
+      box.appendChild(hint);
+      if (!runs.length) {
+        const empty = document.createElement("p");
+        empty.className = "vw-muted";
+        empty.textContent = "No runs yet.";
+        box.appendChild(empty);
+      }
+      runs.forEach((run) => box.appendChild(runRow(run)));
+      const refresh = button("Refresh", () => renderRuns());
+      refresh.title = TIPS["runs.refresh"];
+      box.appendChild(refresh);
+    }).catch((err) => {
+      el.railError.textContent = explain(err);
+    });
+  }
+
+  function answerRun(run, option) {
+    call("/runs/" + encodeURIComponent(run.run_id) + "/respond", {
+      method: "POST",
+      body: { run_id: run.run_id, node_id: run.node_id, answer: option },
+    }).then((data) => {
+      el.railError.textContent = "";
+      note(run.run_id + ": " + ((data && data.status) || "no status"));
+      renderRuns();
+    }).catch((err) => {
+      el.railError.textContent = explain(err);
+    });
+  }
+
+  function runRow(run) {
+    const row = document.createElement("div");
+    row.className = "vw-job";
+    const head = document.createElement("div");
+    head.className = "vw-job-head";
+    const name = document.createElement("strong");
+    name.textContent = run.name || "(unnamed)";
+    const meta = document.createElement("span");
+    meta.className = "vw-muted";
+    meta.textContent = " \u00b7 " + run.status + " \u00b7 " + run.run_id + " \u00b7 " +
+      ageText(run.updated);
+    head.appendChild(name);
+    head.appendChild(meta);
+    row.appendChild(head);
+
+    const isGate = run.status === "awaiting_approval";
+    if (isGate) {
+      const question = document.createElement("p");
+      question.className = "vw-hint";
+      question.textContent = "gate " + run.node_id + ": " + (run.question || "");
+      row.appendChild(question);
+      if (!(run.options || []).length) {
+        const free = document.createElement("p");
+        free.className = "vw-hint";
+        free.textContent = "This gate takes free text \u2014 answer it in chat.";
+        row.appendChild(free);
+      }
+    }
+    if (run.status === "awaiting_agent") {
+      const waiting = document.createElement("p");
+      waiting.className = "vw-hint";
+      waiting.textContent = "agent step " + run.node_id + " is waiting \u2014 answer it in chat.";
+      row.appendChild(waiting);
+    }
+    if (run.error) {
+      const failed = document.createElement("p");
+      failed.className = "vw-error";
+      failed.textContent = (run.error.node_id ? run.error.node_id + ": " : "") +
+        (run.error.msg || "");
+      row.appendChild(failed);
+    }
+    if ((run.deliveries || []).length) {
+      const sent = document.createElement("p");
+      sent.className = "vw-hint";
+      sent.textContent = "delivery: " + run.deliveries.map((d) => {
+        return (d.ok ? "sent " : "FAILED ") + d.node_id + " \u2192 " + (d.target || "?");
+      }).join(" \u00b7 ");
+      row.appendChild(sent);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "vw-job-actions";
+    if (isGate) {
+      (run.options || []).forEach((option) => {
+        const pick = button(option, () => answerRun(run, option));
+        pick.title = TIPS["runs.approve"];
+        actions.appendChild(pick);
+      });
+    }
+    if (run.name) {
+      const reopen = button("Open", () => {
+        open(run.name);
+        showView("designer");
+      });
+      reopen.title = TIPS["runs.open"];
+      actions.appendChild(reopen);
+    }
+    row.appendChild(actions);
+    return row;
   }
 
   function scheduleAct(job, action) {
@@ -1609,8 +1744,10 @@ function createDesigner(host, call) {
     q('[data-vw="connect"]').title = TIPS["bar.connect"];
     q('[data-vw="delete"]').title = TIPS["bar.delete"];
     q('[data-vw="view-designer"]').title = "Edit the workflow on the canvas.";
+    q('[data-vw="view-runs"]').title = "Every run saved on this machine, with any waiting gate answerable here.";
     q('[data-vw="view-schedules"]').title = "See and control the Hermes cron jobs this plugin created.";
     q('[data-vw="view-designer"]').addEventListener("click", () => showView("designer"));
+    q('[data-vw="view-runs"]').addEventListener("click", () => showView("runs"));
     q('[data-vw="view-schedules"]').addEventListener("click", () => showView("schedules"));
     q('[data-vw="validate"]').addEventListener("click", validateDraft);
     q('[data-vw="save"]').addEventListener("click", saveDesign);

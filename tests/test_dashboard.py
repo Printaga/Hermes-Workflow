@@ -33,6 +33,9 @@ REQUIRED_ROUTES = {
     ("/designs/{name}/validate", "post"),
     ("/designs/{name}/run", "post"),
     ("/runs/{run_id}/respond", "post"),
+    # Runs view: every run on disk (not just the one this tab started), and one run's detail.
+    ("/runs", "get"),
+    ("/runs/{run_id}", "get"),
     # Schedules view: the delivery-target picker and the cron jobs this plugin created.
     ("/channels", "get"),
     ("/schedules", "get"),
@@ -209,6 +212,60 @@ def test_profiles_endpoint_lists_the_hosts_profiles(tmp_path, monkeypatch):
     }]
 
 
+def _save_gate_design(client, name="gated"):
+    graph = {
+        "name": name,
+        "nodes": [
+            {"id": "trigger1", "type": "trigger", "trigger_mode": "manual", "after": []},
+            {"id": "gate", "type": "approval", "question": "Ship it?",
+             "options": ["ship", "hold"], "after": ["trigger1"]},
+            {"id": "out", "type": "output", "after": ["gate"]},
+        ],
+    }
+    saved = client.post(f"/api/plugins/visual-workflow/designs/{name}", json={"graph": graph})
+    assert saved.json()["ok"] is True
+
+
+def test_runs_list_shows_a_gate_started_outside_this_tab(tmp_path, monkeypatch):
+    """The Runs view must see runs on disk and be able to approve them from the list."""
+    client, _ = _client(tmp_path, monkeypatch)
+    _save_gate_design(client)
+
+    started = client.post("/api/plugins/visual-workflow/designs/gated/run").json()
+    assert started["status"] == "awaiting_approval"
+
+    listed = client.get("/api/plugins/visual-workflow/runs").json()["runs"]
+    (row,) = [r for r in listed if r["run_id"] == started["run_id"]]
+    assert row["status"] == "awaiting_approval"
+    assert row["node_id"] == "gate"
+    assert row["question"] == "Ship it?"
+    assert row["options"] == ["ship", "hold"]
+    assert row["updated"] > 0
+
+    # Answering straight from the list row is the same call the inline buttons make.
+    done = client.post(
+        f"/api/plugins/visual-workflow/runs/{started['run_id']}/respond",
+        json={"run_id": started["run_id"], "node_id": "gate", "answer": "ship"},
+    ).json()
+    assert done["status"] == "done"
+
+    # ...and the finished status is what the list reads back, not a stale "running".
+    listed = client.get("/api/plugins/visual-workflow/runs").json()["runs"]
+    (row,) = [r for r in listed if r["run_id"] == started["run_id"]]
+    assert row["status"] == "done"
+    detail = client.get(f"/api/plugins/visual-workflow/runs/{started['run_id']}").json()
+    assert detail["status"] == "done" and detail["outputs"]["out"] == {"gate": "ship"}
+
+
+def test_runs_list_respects_a_limit_and_unknown_run_is_404(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path, monkeypatch)
+    _save_gate_design(client)
+    for _ in range(2):
+        client.post("/api/plugins/visual-workflow/designs/gated/run")
+    assert len(client.get("/api/plugins/visual-workflow/runs?limit=1").json()["runs"]) == 1
+    assert client.get("/api/plugins/visual-workflow/runs/ffffffffffff").status_code == 404
+
+
 def test_run_through_the_router_returns_the_delivery_record(tmp_path, monkeypatch):
     """A delivering output is recorded on the run; a failed send does not fail the run."""
     from visual_workflow_hermes import delivery
@@ -273,6 +330,14 @@ def test_entry_talks_to_the_backend_only_through_the_sdk(entry):
     # Hand-rolled auth or a bare fetch would bypass the host's token/cookie handling.
     assert "window.__HERMES_SESSION_TOKEN__" not in entry
     assert "fetch(" not in entry.replace("fetchJSON", "")
+
+
+def test_entry_has_a_runs_view_that_answers_gates_inline(entry):
+    """Runs started elsewhere must be listed and answerable from the canvas itself."""
+    assert "function RunsPanel" in entry
+    assert 'fetchJSON(API + "/runs?limit=20")' in entry, "the Runs view must read GET /runs"
+    assert '/respond"' in entry or "/respond'" in entry, "inline approve must post to respond"
+    assert 'view === "runs"' in entry
 
 
 def test_entry_is_a_no_build_iife(entry):

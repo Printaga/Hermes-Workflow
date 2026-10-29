@@ -233,6 +233,40 @@ def schedule_action(job_id: str, action: str) -> dict:
     return {**apply_action(action, job_id), "job_id": job_id}
 
 
+@router.get("/runs")
+def list_runs(limit: int = 20) -> dict:
+    """Recent runs on disk, newest first — including ones this browser did not start.
+
+    The canvas used to know only the run it had just launched, so a run begun by the chat tool,
+    a cron job or another tab was invisible and could not be answered. Each row carries what a
+    reviewer needs to act: status, and for a gate the question and its options.
+    """
+    rows = []
+    for row in _runs().recent(limit):
+        state = row["state"]
+        pending = state.get("pending") or {}
+        rows.append(
+            {
+                "run_id": row["run_id"],
+                "name": state.get("name"),
+                "status": state.get("status"),
+                "node_id": pending.get("node_id"),
+                "question": pending.get("question"),
+                "options": pending.get("options") or [],
+                "error": state.get("error"),
+                "deliveries": state.get("deliveries") or [],
+                "updated": row["updated"],
+            }
+        )
+    return {"runs": rows}
+
+
+@router.get("/runs/{run_id}")
+def get_run(run_id: str) -> dict:
+    """One stored run in the same shape a run/respond call returns (for reopening a run)."""
+    return _result(_load_run(run_id))
+
+
 @router.post("/runs/{run_id}/respond")
 def respond_run(run_id: str, payload: dict = Body(...)) -> dict:
     """Resume a paused run: an approval ``answer``, or the output of a pending agent step."""

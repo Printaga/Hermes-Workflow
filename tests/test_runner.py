@@ -168,3 +168,39 @@ def test_runtime_respond_rejects_a_node_that_is_not_pending(tmp_path):
     bad = rt.tool_respond({"run_id": run_id, "node_id": "out", "answer": "x"})
     assert bad["ok"] is False
     assert "not waiting on" in bad["error"]
+
+
+# -- terminal state is persisted -------------------------------------------
+# Regression: run_plan saved through on_step before the cursor advanced past the last step,
+# so a finished run stayed "running" on disk (and in the Runs list) forever.
+
+def test_done_status_reaches_on_step():
+    plan = _plan(
+        {"id": "draft", "kind": "agent", "after": [], "prompt": "write"},
+        {"id": "out", "kind": "output", "after": ["draft"], "keys": ["draft"]},
+    )
+    saved = []
+    state = run_plan(plan, new_state(plan, "r1"), spawn=lambda *a: {"output": "hi"},
+                     on_step=lambda s: saved.append((s["status"], s["cursor"])))
+    assert state["status"] == "done"
+    assert saved[-1][0] == "done", f"terminal state never saved; saw {saved}"
+
+
+def test_finished_run_is_done_on_disk(tmp_path):
+    """The stored run must not still say "running" after the last step (the actual bug)."""
+    rt = _runtime(tmp_path)
+    _save_approval_design(rt)
+    run_id = rt.tool_run({"name": "demo"})["run_id"]
+    rt.tool_respond({"run_id": run_id, "node_id": "draft", "structured": {"word_count": 3}})
+    stored = rt._runs().load(run_id)
+    assert stored["status"] == "done"
+
+
+def test_failed_status_reaches_on_step():
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "x"})
+    saved = []
+    state = run_plan(plan, new_state(plan, "r2"),
+                     spawn=lambda *a: {"error": "boom"},
+                     on_step=lambda s: saved.append(s["status"]))
+    assert state["status"] == "failed"
+    assert saved[-1] == "failed"

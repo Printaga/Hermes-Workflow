@@ -86,3 +86,23 @@ class RunStore:
 
     def list_runs(self) -> list[str]:
         return sorted(p.stem for p in self.root.glob("*.json"))
+
+    def recent(self, limit: int = 20) -> list[dict]:
+        """Newest-first runs: ``[{run_id, updated, state}]``; unreadable files are skipped.
+
+        The Runs list needs every run on disk, not just the one this session started, so a
+        run begun by the chat tool or a cron job is visible in the canvas too.
+        """
+        rows: list[dict] = []
+        for path in self.root.glob("*.json"):
+            if not _RUN_ID_RE.match(path.stem):
+                continue
+            try:
+                state = json.loads(path.read_text())
+                updated = path.stat().st_mtime
+            except (OSError, ValueError):  # a half-written or corrupt file is not a run
+                continue
+            if isinstance(state, dict) and isinstance(state.get("status"), str):
+                rows.append({"run_id": path.stem, "updated": updated, "state": state})
+        rows.sort(key=lambda row: row["updated"], reverse=True)
+        return rows[: max(0, int(limit))]

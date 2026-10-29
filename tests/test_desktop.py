@@ -124,6 +124,15 @@ def test_agent_picker_reads_the_plugin_profiles_route(source):
     assert "profile / bot" in source
 
 
+def test_runs_view_lists_every_run_and_answers_gates(source):
+    """A run started in chat or by a cron job must be visible and answerable here too."""
+    assert 'data-vw="view-runs"' in source
+    assert "function renderRuns(" in source and "function runRow(" in source
+    assert '"/runs?limit=20"' in source, "the list must read the runs route"
+    assert '"/runs/"' in source and '"/respond"' in source
+    assert "function answerRun(" in source
+
+
 def test_output_delivery_is_offered_and_reported(source):
     assert 'field("deliver"' in source
     assert '"notification"' in source and '"channel"' in source
