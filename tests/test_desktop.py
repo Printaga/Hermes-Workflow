@@ -149,10 +149,11 @@ def test_runs_view_lists_every_run_and_answers_gates(source):
     assert "function answerRun(" in source
 
 
-def test_output_delivery_is_offered_and_reported(source):
-    assert 'field("deliver"' in source
+def test_output_delivery_is_offered_as_one_send_to_choice(source):
+    assert "function applySendTo(node, value)" in source
+    assert 'field("send to"' in source
     assert '"notification"' in source and '"channel"' in source
-    assert 'field("target"' in source
+    assert 'field("deliver"' not in source, "a second dropdown can rebuild the invalid pair"
     assert "function deliveryLine(" in source, "the run box must show what was delivered"
     assert "result.deliveries" in source
 

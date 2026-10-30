@@ -45,9 +45,8 @@ OPTION_KEYS = (
     "approval.timeout",
     "approval.on_timeout",
     "output.parents",
-    "output.deliver",
+    "output.send_to",
     "output.target",
-    "output.target.custom",
     "note.text",
     "note.color",
 )

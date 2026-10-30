@@ -1,5 +1,5 @@
 {
-  "$comment": "One hand-written description of what a canvas may offer. tests/test_node_spec.py holds schema.py and all three canvases to it: the point is to fail loudly on the next drift, not to generate the UIs. `tip` (and each `tips` extra) is the canvas tooltip key (TIPS[...]) that must exist in dashboard/dist/index.js, desktop/plugin.js and widgets/designer.html; `required` mirrors schema.REQUIRED_FIELDS. Fields the validator accepts but no canvas edits (agent `schema`/`inputs`/`timeout`) are deliberately absent.",
+  "$comment": "One hand-written description of what a canvas may offer. tests/test_node_spec.py holds schema.py and all three canvases to it: the point is to fail loudly on the next drift, not to generate the UIs. `tip` (and each `tips` extra) is the canvas tooltip key (TIPS[...]) that must exist in dashboard/dist/index.js, desktop/plugin.js and widgets/designer.html; `required` mirrors schema.REQUIRED_FIELDS. A field with `derives` is a canvas-only control: its name must never reach the backend, and every name it derives must be one the backend reads. Fields the validator accepts but no canvas edits (agent `schema`/`inputs`/`timeout`) are deliberately absent.",
   "kinds": [
     {
       "kind": "trigger",
@@ -102,14 +102,13 @@
       "required": [],
       "fields": [
         {
-          "name": "deliver",
+          "name": "send_to",
           "type": "enum",
-          "tip": "output.deliver"
-        },
-        {
-          "name": "target",
-          "type": "text",
-          "tip": "output.target"
+          "tip": "output.send_to",
+          "derives": [
+            "deliver",
+            "target"
+          ]
         }
       ],
       "tips": [

@@ -61,8 +61,8 @@ const TIPS = {
   "approval.timeout": "How long to wait for a person before the gate expires, in minutes; empty waits forever.",
   "approval.on_timeout": "What an expired gate does: reject fails the run, escalate flags it for a person.",
   "output.parents": "Steps whose results this output collects \u2014 connect an edge instead of typing here.",
-  "output.deliver": "What to do with the results: collect only, notification to your home channel, or one specific chat.",
-  "output.target": "Where to send it: platform:chat id like telegram:8522302999, or just the platform for its home channel.",    "output.target.custom": "Type platform:chat id yourself when the chat list is unavailable.",
+  "output.send_to": "One choice: collect only, a home channel for a notification, or one specific chat.",
+  "output.target": "Where it goes: a platform for its home channel, or platform:chat id like telegram:8522302999.",
     "note.text": "What the sticky says; it is only for the person reading the canvas.",
     "note.color": "Tint for the sticky; it is a reading aid, not part of the run.",
   "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
@@ -85,6 +85,7 @@ const TIPS = {
   "schedules.create": "Create or update the Hermes cron job for the chosen workflow.",
   "schedule.status": "Whether Hermes really has a cron job for this workflow, and when it next fires.",
   "runs.approve": "Answer this gate now; the run resumes from where it stopped.",
+  "runs.resume": "Paste the agent step's result here and resume the run right where it paused.",
   "runs.open": "Open the saved workflow this run belongs to.",
   "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
@@ -983,38 +984,56 @@ function createDesigner(host, call) {
 
   /** Chats the host gateway has seen (``GET /channels``); empty means the canvas offers a
    *  free-text field instead of a picker that cannot fill. */
-  function channelSelect(current) {
+  /** One send-to value -> the two fields the backend reads. A bare platform is that
+   *  platform's home channel (a notification); anything with a colon is one specific chat.
+   *  Deriving both from one value is what makes the invalid pair impossible to build. */
+  function applySendTo(node, value) {
+    const target = String(value || "").trim();
+    delete node.deliver;
+    delete node.target;
+    if (!target) return node;
+    node.deliver = target.indexOf(":") === -1 ? "notification" : "channel";
+    node.target = target;
+    return node;
+  }
+
+  /** The picker value a saved node shows: no delivery mode = collect only. */
+  function sendToValue(node) {
+    return node.deliver ? String(node.target || "") : "";
+  }
+
+  function sendToSelect(current) {
     const select = document.createElement("select");
     const blank = document.createElement("option");
     blank.value = "";
-    blank.textContent = channels.length
-      ? "\u2014 pick a chat \u2014"
-      : "\u2014 no chats listed \u2014";
-    blank.title = TIPS["output.target"];
+    blank.textContent = "collect only \u2014 do not send";
+    blank.title = TIPS["output.send_to"];
     select.appendChild(blank);
+    const value = sendToValue(current);
     let known = false;
     channels.forEach((item) => {
       const option = document.createElement("option");
       option.value = item.id;
       option.textContent = item.label || item.id;
       option.title = item.id;
-      if (item.id === current.target) {
+      if (item.id === value) {
         option.selected = true;
         known = true;
       }
       select.appendChild(option);
     });
-    if (current.target && !known) {
-      // A saved target the gateway has not seen recently must stay visible, not reset.
+    if (value && !known) {
+      // A saved target the gateway has not listed must stay visible, not reset.
       const stale = document.createElement("option");
-      stale.value = current.target;
-      stale.textContent = current.target + " (not listed)";
+      stale.value = value;
+      stale.textContent = value + " (not listed)";
+      stale.title = TIPS["output.target"];
       stale.selected = true;
       select.appendChild(stale);
     }
     select.addEventListener("change", () => {
-      if (select.value) current.target = select.value;
-      else delete current.target;
+      applySendTo(current, select.value);
+      buildInspector();
       draw();
     });
     return select;
@@ -1317,41 +1336,20 @@ function createDesigner(host, call) {
         ? (current.after || []).join(", ")
         : "(no parents \u2014 this output collects nothing)";
       box.appendChild(field("parents", parents, TIPS["output.parents"]));
-      const deliver = document.createElement("select");
-      deliver.title = TIPS["output.deliver"];
-      [["", "collect only (no delivery)"],
-       ["notification", "notification \u2014 my home channel"],
-       ["channel", "channel \u2014 a specific chat"]].forEach((pair) => {
-        const option = document.createElement("option");
-        option.value = pair[0];
-        option.textContent = pair[1];
-        option.title = TIPS["output.deliver"];
-        if ((current.deliver || "") === pair[0]) option.selected = true;
-        deliver.appendChild(option);
-      });
-      deliver.addEventListener("change", () => {
-        if (deliver.value) current.deliver = deliver.value;
-        else delete current.deliver;
-        buildInspector();
-        draw();
-      });
-      box.appendChild(field("deliver", deliver, TIPS["output.deliver"]));
-      if (current.deliver === "channel") {
-        if (channels.length) {
-          box.appendChild(field("target", channelSelect(current), TIPS["output.target"]));
-        } else {
-          box.appendChild(field("target", textInput(current.target || "", (v) => {
-            current.target = v;
-            draw();
-          }, "telegram:8522302999"), TIPS["output.target.custom"]));
-        }
-        const targetHint = document.createElement("p");
-        targetHint.className = "vw-hint";
-        targetHint.textContent = channels.length
-          ? "A chat Hermes has seen; leave empty for the platform's home channel."
-          : "<platform>:<chat id>. Leave empty to use the platform's home channel.";
-        box.appendChild(targetHint);
+      if (channels.length) {
+        box.appendChild(field("send to", sendToSelect(current), TIPS["output.send_to"]));
+      } else {
+        box.appendChild(field("send to", textInput(current.target || "", (v) => {
+          applySendTo(current, v);
+          draw();
+        }, "telegram:8522302999"), TIPS["output.target"]));
       }
+      const targetHint = document.createElement("p");
+      targetHint.className = "vw-hint";
+      targetHint.textContent = channels.length
+        ? "A home channel sends a notification; a chat sends there. Collect only just records the result."
+        : "Bare platform for its home channel, or platform:chat id for one chat.";
+      box.appendChild(targetHint);
     }
   }
 
@@ -1583,6 +1581,21 @@ function createDesigner(host, call) {
     });
   }
 
+  /** Bring a stored run into the designer's run panel, where its resume box is mounted. */
+  function openRun(run) {
+    if (!run || !run.name) return;
+    call("/designs/" + encodeURIComponent(run.name)).then((data) => {
+      loadGraph(data.graph);
+      renderDesigns();
+      showView("designer");
+      return call("/runs/" + encodeURIComponent(run.run_id));
+    }).then((state) => {
+      if (state) renderRun(state);
+    }).catch((err) => {
+      el.railError.textContent = explain(err);
+    });
+  }
+
   function runRow(run) {
     const row = document.createElement("div");
     row.className = "vw-job";
@@ -1622,8 +1635,16 @@ function createDesigner(host, call) {
     if (run.status === "awaiting_agent") {
       const waiting = document.createElement("p");
       waiting.className = "vw-hint";
-      waiting.textContent = "agent step " + run.node_id + " is waiting \u2014 answer it in chat.";
+      waiting.textContent = "agent step " + run.node_id + " is paused \u2014 open the run to paste " +
+        "its result, or answer it from chat.";
       row.appendChild(waiting);
+      const answer = document.createElement("button");
+      answer.type = "button";
+      answer.className = "vw-pill";
+      answer.textContent = "Answer";
+      answer.title = TIPS["runs.resume"];
+      answer.addEventListener("click", () => openRun(run));
+      row.appendChild(answer);
     }
     if (run.error) {
       const failed = document.createElement("p");
@@ -2126,13 +2147,18 @@ function createDesigner(host, call) {
       box.appendChild(line("h4", "agent step " + step.node_id + " is waiting"));
       box.appendChild(line("pre", step.prompt || ""));
       if (step.context) box.appendChild(line("pre", step.context));
+      box.appendChild(line("p", "Paste the step's result here and press resume \u2014 no chat needed.", "vw-hint"));
       const area = document.createElement("textarea");
       area.rows = 3;
       area.placeholder = "paste the step's output (a JSON object is passed as structured)";
+      area.setAttribute("aria-label", "result for agent step " + step.node_id);
       box.appendChild(area);
-      box.appendChild(button("Send result", () => {
+      const send = button("Send result & resume", () => {
         respond(step.node_id, area.value);
-      }));
+      });
+      send.title = TIPS["runs.resume"];
+      box.appendChild(send);
+      box.appendChild(line("p", "Or run the workflow from chat and the agent executes the step for you.", "vw-hint"));
       return;
     }
 

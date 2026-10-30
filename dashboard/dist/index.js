@@ -76,9 +76,8 @@
     "approval.timeout": "How long to wait for a person before the gate expires, in minutes; empty waits forever.",
     "approval.on_timeout": "What an expired gate does: reject fails the run, escalate flags it for a person.",
     "output.parents": "Steps whose results this output collects \u2014 connect an edge instead of typing here.",
-    "output.deliver": "What to do with the results: collect only, notification to your home channel, or one specific chat.",
+    "output.send_to": "One choice: collect only, a home channel for a notification, or one specific chat.",
     "output.target": "Where to send it: platform:chat id like telegram:8522302999, or just the platform for its home channel.",
-    "output.target.custom": "Type platform:chat id yourself when the chat list is unavailable.",
     "note.text": "What the sticky says; it is only for the person reading the canvas.",
     "note.color": "Tint for the sticky; it is a reading aid, not part of the run.",
     "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
@@ -101,6 +100,7 @@
     "schedules.create": "Create or update the Hermes cron job for the chosen workflow.",
     "schedule.status": "Whether Hermes really has a cron job for this workflow, and when it next fires.",
     "runs.approve": "Answer this gate now; the run resumes from where it stopped.",
+    "runs.resume": "Paste the agent step's result here and resume the run right where it paused.",
     "runs.open": "Open the saved workflow this run belongs to.",
     "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
@@ -991,38 +991,56 @@
      *  free-text field instead of a picker that cannot fill. */
     var channels = options.channels || [];
 
-    function channelSelect(current) {
+    /** One send-to value -> the two fields the backend reads. A bare platform is that
+     *  platform's home channel (a notification); anything with a colon is one specific chat.
+     *  Deriving both from one value is what makes the invalid pair impossible to build. */
+    function applySendTo(node, value) {
+      var target = String(value || "").trim();
+      delete node.deliver;
+      delete node.target;
+      if (!target) return node;
+      node.deliver = target.indexOf(":") === -1 ? "notification" : "channel";
+      node.target = target;
+      return node;
+    }
+
+    /** The picker value a saved node shows: no delivery mode = collect only. */
+    function sendToValue(node) {
+      return node.deliver ? String(node.target || "") : "";
+    }
+
+    function sendToSelect(current) {
       var select = document.createElement("select");
       var blank = document.createElement("option");
       blank.value = "";
-      blank.textContent = channels.length
-        ? "\u2014 pick a chat \u2014"
-        : "\u2014 no chats listed \u2014";
-      blank.title = TIPS["output.target"];
+      blank.textContent = "collect only \u2014 do not send";
+      blank.title = TIPS["output.send_to"];
       select.appendChild(blank);
+      var value = sendToValue(current);
       var known = false;
       channels.forEach(function (item) {
         var option = document.createElement("option");
         option.value = item.id;
         option.textContent = item.label || item.id;
         option.title = item.id;
-        if (item.id === current.target) {
+        if (item.id === value) {
           option.selected = true;
           known = true;
         }
         select.appendChild(option);
       });
-      if (current.target && !known) {
-        // A saved target the gateway has not seen recently must stay visible, not reset.
+      if (value && !known) {
+        // A saved target the gateway has not listed must stay visible, not reset.
         var stale = document.createElement("option");
-        stale.value = current.target;
-        stale.textContent = current.target + " (not listed)";
+        stale.value = value;
+        stale.textContent = value + " (not listed)";
+        stale.title = TIPS["output.target"];
         stale.selected = true;
         select.appendChild(stale);
       }
       select.addEventListener("change", function () {
-        if (select.value) current.target = select.value;
-        else delete current.target;
+        applySendTo(current, select.value);
+        buildInspector();
         draw();
       });
       return select;
@@ -1333,40 +1351,20 @@
           ? (current.after || []).join(", ")
           : "(no parents \u2014 this output collects nothing)";
         box.appendChild(field("parents", parents, TIPS["output.parents"]));
-        var deliver = document.createElement("select");
-        [["", "collect only (no delivery)"],
-         ["notification", "notification \u2014 my home channel"],
-         ["channel", "channel \u2014 a specific chat"]].forEach(function (pair) {
-          var option = document.createElement("option");
-          option.value = pair[0];
-          option.textContent = pair[1];
-          option.title = TIPS["output.deliver"];
-          if ((current.deliver || "") === pair[0]) option.selected = true;
-          deliver.appendChild(option);
-        });
-        deliver.addEventListener("change", function () {
-          if (deliver.value) current.deliver = deliver.value;
-          else delete current.deliver;
-          buildInspector();
-          draw();
-        });
-        box.appendChild(field("deliver", deliver, TIPS["output.deliver"]));
-        if (current.deliver === "channel") {
-          if (channels.length) {
-            box.appendChild(field("target", channelSelect(current), TIPS["output.target"]));
-          } else {
-            box.appendChild(field("target", textInput(current.target || "", function (v) {
-              current.target = v;
-              draw();
-            }, "telegram:8522302999"), TIPS["output.target.custom"]));
-          }
-          var targetHint = document.createElement("p");
-          targetHint.className = "vw-hint";
-          targetHint.textContent = channels.length
-            ? "A chat Hermes has seen; leave empty for the platform's home channel."
-            : "<platform>:<chat id>. Leave empty to use the platform's home channel.";
-          box.appendChild(targetHint);
+        if (channels.length) {
+          box.appendChild(field("send to", sendToSelect(current), TIPS["output.send_to"]));
+        } else {
+          box.appendChild(field("send to", textInput(current.target || "", function (v) {
+            applySendTo(current, v);
+            draw();
+          }, "telegram:8522302999"), TIPS["output.target"]));
         }
+        var targetHint = document.createElement("p");
+        targetHint.className = "vw-hint";
+        targetHint.textContent = channels.length
+          ? "A home channel sends a notification; a chat sends there. Collect only just records the result."
+          : "Bare platform for its home channel, or platform:chat id for one chat.";
+        box.appendChild(targetHint);
       }
     }
 
@@ -1677,13 +1675,18 @@
         box.appendChild(line("h4", "agent step " + step.node_id + " is waiting"));
         box.appendChild(line("pre", step.prompt || ""));
         if (step.context) box.appendChild(line("pre", step.context));
+        box.appendChild(line("p", "Paste the step's result here and press resume \u2014 no chat needed.", "vw-hint"));
         var area = document.createElement("textarea");
         area.rows = 3;
         area.placeholder = "paste the step's output (a JSON object is passed as structured)";
+        area.setAttribute("aria-label", "result for agent step " + step.node_id);
         box.appendChild(area);
-        box.appendChild(button("Send result", function () {
+        var send = button("Send result & resume", function () {
           respond(step.node_id, area.value);
-        }));
+        });
+        send.title = TIPS["runs.resume"];
+        box.appendChild(send);
+        box.appendChild(line("p", "Or run the workflow from chat and the agent executes the step for you.", "vw-hint"));
         return;
       }
 
@@ -1802,6 +1805,10 @@
       setChannels: function (list) {
         channels = Array.isArray(list) ? list : [];
         buildInspector();
+      },
+      /** Bring a stored run back into the run panel, where its resume box lives. */
+      showRun: function (result) {
+        renderRun(result);
       },
       /** Names known to exist server-side, so Run can refuse a draft instead of sending a 404. */
       setDesigns: function (list) {
@@ -2032,6 +2039,13 @@
           }, option));
         });
       }
+      if (isAgent) {
+        actions.push(h("button", {
+          key: "answer", type: "button", className: "vw-pill",
+          title: TIPS["runs.resume"], disabled: busy === row.run_id,
+          onClick: function () { props.onAnswer(row); },
+        }, "Answer"));
+      }
       actions.push(h("button", {
         key: "open", type: "button", className: "vw-pill", title: TIPS["runs.open"],
         onClick: function () { props.onOpen(row.name); },
@@ -2052,7 +2066,7 @@
           : null,
         isAgent
           ? h("p", { className: "vw-hint" },
-              "agent step " + row.node_id + " is waiting \u2014 answer it in chat.")
+              "agent step " + row.node_id + " is paused \u2014 answer it in the run panel, or from chat.")
           : null,
         row.error
           ? h("p", { className: "vw-error" },
@@ -2167,6 +2181,19 @@
       });
     }
 
+    // A paused agent step is answered in the run panel, so "Answer" has to land the user there
+    // with that run mounted — the whole point is to remove the "go somewhere else" dead end.
+    function answerStored(row) {
+      if (!row || !row.name) return;
+      open(row.name);
+      setView("designer");
+      fetchJSON(API + "/runs/" + encodeURIComponent(row.run_id)).then(function (run) {
+        if (designerRef.current && run) designerRef.current.showRun(run);
+      }).catch(function (err) {
+        setError(explain(err));
+      });
+    }
+
     function blank() {
       setActive("");
       setError("");
@@ -2248,12 +2275,13 @@
       view === "schedules"
         ? h("div", { className: "vw-stage vw-stage-sched" }, h(SchedulesPanel, { designs: designs }))
         : view === "runs"
-          ? h("div", { className: "vw-stage vw-stage-sched" }, h(RunsPanel, {
+          ? h("div", { className: "vw-stage vw-stage-sched" },            h(RunsPanel, {
               onOpen: function (name) {
                 if (!name) return;
                 open(name);
                 setView("designer");
               },
+              onAnswer: answerStored,
             }))
           : h("div", { className: "vw-stage", ref: hostRef })
     );

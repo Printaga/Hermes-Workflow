@@ -69,8 +69,13 @@ def test_spec_only_names_fields_the_python_side_actually_reads():
             # and is dropped by the converter, so only its tooltips are asserted here.
             continue
         for field in row["fields"]:
-            name = field["name"]
-            assert f'"{name}"' in backend, f"{kind}.{name} is never read by schema/convert"
+            names = field.get("derives") or [field["name"]]
+            for name in names:
+                assert f'"{name}"' in backend, f"{kind}.{name} is never read by schema/convert"
+            if field.get("derives"):
+                assert field["name"] not in backend, (
+                    f"{kind}.{field['name']} is a canvas-only control and must not reach the backend"
+                )
 
 
 def test_required_fields_are_the_prefix_of_every_canvas_field_list():
@@ -94,8 +99,8 @@ def test_every_canvas_defines_every_spec_tooltip(source):
         # Defined is not wired: an orphaned field entry in the TIPS map renders nothing. The
         # accepted forms match tests/test_tooltips.py, which owns the wording of every tip (and
         # which this file deliberately does not restate): the exact key, a more specific one
-        # (`output.target.custom`), or the parent's (`output.target` for `.custom`). Kind-level
-        # tips are read through `TIPS[n.type]`, so the definition assert above covers them.
+        # (`trigger.time` for a preset), or the parent's. Kind-level tips are read through
+        # `TIPS[n.type]`, so the definition assert above covers them.
         tips = [f["tip"] for f in row["fields"]] + list(row["tips"])
         for tip in tips:
             parent = tip.rsplit(".", 1)[0]

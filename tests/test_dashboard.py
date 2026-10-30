@@ -526,10 +526,11 @@ def test_entry_lists_profiles_for_the_agent_picker(entry):
     assert "setProfiles" in entry
 
 
-def test_entry_offers_and_reports_output_delivery(entry):
-    assert 'field("deliver"' in entry
+def test_entry_offers_one_send_to_choice_and_reports_delivery(entry):
+    assert "function applySendTo(node, value)" in entry
+    assert 'field("send to"' in entry
     assert '"notification"' in entry and '"channel"' in entry
-    assert 'field("target"' in entry
+    assert 'field("deliver"' not in entry, "a second dropdown can rebuild the invalid pair"
     assert "function deliveryLine(" in entry
     assert "result.deliveries" in entry
 

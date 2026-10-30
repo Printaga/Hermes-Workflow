@@ -135,10 +135,11 @@ def test_agent_node_offers_a_profile_picker(html):
     assert "profile / bot" in html
 
 
-def test_output_node_can_deliver_and_validates_its_target(html):
-    assert 'field("deliver"' in html
+def test_output_node_offers_one_send_to_choice(html):
+    assert "function applySendTo(node, value)" in html
+    assert 'field("send to"' in html
     assert '"notification"' in html and '"channel"' in html
-    assert 'field("target"' in html
+    assert 'field("deliver"' not in html, "a second dropdown can rebuild the invalid pair"
 
 
 def test_approval_gate_takes_a_deadline(html):

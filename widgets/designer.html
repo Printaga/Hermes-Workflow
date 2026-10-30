@@ -106,6 +106,13 @@
   #canvas .ghost {
     fill: none; stroke: var(--accent, #6ea8fe); stroke-width: 1.6; stroke-dasharray: 4 3;
   }
+  /* The run panel is separate from the validation list: a paused run must stay visible and
+     carry its own result box, not scroll away as one more error line. */
+  #run { padding: 8px; border-top: 1px solid var(--border, #3a3a3a); }
+  #run[hidden] { display: none; }
+  #run h4 { margin: 0 0 4px; font-size: 12px; }
+  #run pre { margin: 4px 0; white-space: pre-wrap; max-height: 160px; overflow: auto; }
+  #run textarea { margin: 4px 0; }
 </style>
 </head>
 <body>
@@ -139,6 +146,7 @@
   </div>
   <div id="banner" role="status" aria-live="polite" aria-atomic="true" hidden></div>
   <pre id="errors" hidden></pre>
+  <div id="run" hidden></div>
 </div>
 
 <script id="default-graph" type="application/json">
@@ -191,9 +199,9 @@
     "approval.timeout": "How long to wait for a person before the gate expires, in minutes; empty waits forever.",
     "approval.on_timeout": "What an expired gate does: reject fails the run, escalate flags it for a person.",
     "output.parents": "Steps whose results this output collects — connect an edge instead of typing here.",
-    "output.deliver": "What to do with the results: collect only, notification to your home channel, or one specific chat.",
-    "output.target": "Where to send it: platform:chat id like telegram:8522302999, or just the platform for its home channel.",
-    "output.target.custom": "Type platform:chat id yourself when the chat list is unavailable.",
+    "output.send_to": "One choice: collect only, a home channel for a notification, or one specific chat.",
+    "output.target": "Where it goes: a platform for its home channel, or platform:chat id like telegram:8522302999.",
+    "runs.resume": "Paste the agent step's result here and resume the run right where it paused.",
     "note.text": "What the sticky says; it is only for the person reading the canvas.",
     "note.color": "Tint for the sticky; it is a reading aid, not part of the run.",
     "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
@@ -365,9 +373,63 @@
   var dragLink = null;  // live drag from an output port: {from, x1, y1, x2, y2}
   var profiles = [];    // host profiles ("bots") offered to agent nodes
   var models = [];      // host model catalog: [{slug, label, models}]
+  var channels = [];    // host channel directory: [{id, label, kind, platform}]
+  var lastRunId = "";   // the run the resume box answers
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
   function node(id) { return graph.nodes.filter(function (n) { return n.id === id; })[0] || null; }
+
+  /** One send-to value -> the two fields the backend reads. A bare platform is that
+   *  platform's home channel (a notification); anything with a colon is one specific chat.
+   *  Deriving both from one value is what makes the invalid pair impossible to build. */
+  function applySendTo(node, value) {
+    var target = String(value || "").trim();
+    delete node.deliver;
+    delete node.target;
+    if (!target) { return node; }
+    node.deliver = target.indexOf(":") === -1 ? "notification" : "channel";
+    node.target = target;
+    return node;
+  }
+
+  /** The picker value a saved node shows: no delivery mode = collect only. */
+  function sendToValue(node) {
+    return node.deliver ? String(node.target || "") : "";
+  }
+
+  function sendToSelect(current) {
+    var select = document.createElement("select");
+    var blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "collect only — do not send";
+    blank.title = TIPS["output.send_to"];
+    select.appendChild(blank);
+    var value = sendToValue(current);
+    var known = false;
+    channels.forEach(function (item) {
+      var option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.label || item.id;
+      option.title = item.id;
+      if (item.id === value) { option.selected = true; known = true; }
+      select.appendChild(option);
+    });
+    if (value && !known) {
+      // A saved target the gateway has not listed must stay visible, not reset.
+      var stale = document.createElement("option");
+      stale.value = value;
+      stale.textContent = value + " (not listed)";
+      stale.title = TIPS["output.target"];
+      stale.selected = true;
+      select.appendChild(stale);
+    }
+    select.addEventListener("change", function () {
+      applySendTo(current, select.value);
+      buildInspector();
+      draw();
+    });
+    return select;
+  }
 
   // ---------------------------------------------------------------- layout
   function layout() {
@@ -1231,33 +1293,20 @@
         ? (current.after || []).join(", ")
         : "(no parents — this output collects nothing)";
       box.appendChild(field("parents", parents, TIPS["output.parents"]));
-      var deliver = document.createElement("select");
-      deliver.title = TIPS["output.deliver"];
-      [["", "collect only (no delivery)"],
-       ["notification", "notification — my home channel"],
-       ["channel", "channel — a specific chat"]].forEach(function (pair) {
-        var option = document.createElement("option");
-        option.value = pair[0];
-        option.textContent = pair[1];
-        option.title = TIPS["output.deliver"];
-        if ((current.deliver || "") === pair[0]) { option.selected = true; }
-        deliver.appendChild(option);
-      });
-      deliver.addEventListener("change", function () {
-        if (deliver.value) { current.deliver = deliver.value; } else { delete current.deliver; }
-        buildInspector();
-        draw();
-      });
-      box.appendChild(field("deliver", deliver, TIPS["output.deliver"]));
-      if (current.deliver === "channel") {
-        box.appendChild(field("target", textInput(current.target || "", function (v) {
-          current.target = v; draw();
-        }, "telegram:8522302999"), TIPS["output.target.custom"]));
-        var targetHint = document.createElement("p");
-        targetHint.className = "hint";
-        targetHint.textContent = "<platform>:<chat id>. Leave empty to use the platform's home channel.";
-        box.appendChild(targetHint);
+      if (channels.length) {
+        box.appendChild(field("send to", sendToSelect(current), TIPS["output.send_to"]));
+      } else {
+        box.appendChild(field("send to", textInput(current.target || "", function (v) {
+          applySendTo(current, v);
+          draw();
+        }, "telegram:8522302999"), TIPS["output.target"]));
       }
+      var targetHint = document.createElement("p");
+      targetHint.className = "hint";
+      targetHint.textContent = channels.length
+        ? "A home channel sends a notification; a chat sends there. Collect only just records the result."
+        : "Bare platform for its home channel, or platform:chat id for one chat.";
+      box.appendChild(targetHint);
     }
   }
 
@@ -1327,6 +1376,19 @@
   var API = "/api/plugins/visual-workflow";
   var savedNames = [];  // designs the backend already has, so Run can refuse a draft by name
 
+  /** Chats the host gateway has seen (``GET /channels``); empty means the output inspector
+   *  falls back to a typed target instead of a picker that cannot fill. */
+  function refreshChannels() {
+    if (!window.fetch) { return; }
+    window.fetch(API + "/channels", { credentials: "same-origin" })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) {
+        channels = (data && data.channels) || [];
+        buildInspector();
+      })
+      .catch(function () { channels = []; });
+  }
+
   /** Remember which names are saved: a draft has no server-side design to run. */
   function refreshDesigns() {
     if (!window.fetch) { return; }
@@ -1336,38 +1398,148 @@
       .catch(function () { savedNames = []; });
   }
 
-  /** Announce a run's outcome above the canvas. A run that pauses must say so: a run that
-   *  quietly waits looks exactly like a run that did nothing. */
+  /** A small run-panel action button (the widget has no framework to build one). */
+  function runButton(label, onClick) {
+    var node = document.createElement("button");
+    node.type = "button";
+    node.className = "pill";
+    node.textContent = label;
+    node.addEventListener("click", onClick);
+    return node;
+  }
+
+  /** One line of the run panel. */
+  function runLine(tag, text, cls) {
+    var node = document.createElement(tag);
+    if (cls) { node.className = cls; }
+    node.textContent = text;
+    return node;
+  }
+
+  /** Announce a run's outcome and, when it pauses, put the way to resume it right there. A
+   *  run that only says "go to chat" is a dead end; a run that quietly waits looks broken. */
   function renderRun(result) {
     var status = result.status;
     var runId = result.run_id || "";
-    var lines = [];
+    lastRunId = runId;
+    var box = document.getElementById("run");
+    box.textContent = "";
+    box.hidden = false;
     if (status === "awaiting_approval") {
       var gate = result.pending || {};
-      banner("Run " + runId + " paused at gate " + gate.node_id + " — answer it in chat with workflow respond.", "warn");
-      lines.push("gate " + gate.node_id + ": " + (gate.question || ""));
+      banner("Run " + runId + " paused at gate " + gate.node_id + " — answer it below.", "warn");
+      box.appendChild(runLine("h4", "gate " + gate.node_id + ": " + (gate.question || "")));
       // The context is the material being approved; dropping it asks for a decision with
       // less information than the backend already sent.
-      if (gate.context) { lines.push(gate.context); }
-      if (gate.options && gate.options.length) { lines.push("options: " + gate.options.join(", ")); }
-    } else if (status === "awaiting_agent") {
+      if (gate.context) { box.appendChild(runLine("pre", gate.context)); }
+      var options = gate.options || [];
+      if (options.length) {
+        var row = document.createElement("div");
+        options.forEach(function (option) {
+          var pick = runButton(option, function () { respond(gate.node_id, option); });
+          pick.title = TIPS["runs.approve"];
+          row.appendChild(pick);
+        });
+        box.appendChild(row);
+      } else {
+        box.appendChild(runLine("p", "Type the answer and press send.", "hint"));
+        var free = document.createElement("textarea");
+        free.rows = 2;
+        free.setAttribute("aria-label", "answer for gate " + gate.node_id);
+        box.appendChild(free);
+        var sendFree = runButton("Send result & resume", function () {
+          respond(gate.node_id, free.value);
+        });
+        sendFree.title = TIPS["runs.resume"];
+        box.appendChild(sendFree);
+      }
+      box.appendChild(runLine("p", "Or answer it from chat with workflow_design_respond.", "hint"));
+      return;
+    }
+    if (status === "awaiting_agent") {
       var step = result.pending || {};
-      banner("Run " + runId + " paused at agent step " + step.node_id + " — this designer cannot run an agent, so finish it from chat.", "warn");
-      lines.push("agent step " + step.node_id + " is waiting");
-      if (step.prompt) { lines.push(step.prompt); }
-      if (step.context) { lines.push(step.context); }
-    } else if (status === "failed") {
+      banner("Run " + runId + " paused at agent step " + step.node_id +
+        " — paste its result below to resume, or run the workflow from chat.", "warn");
+      box.appendChild(runLine("h4", "agent step " + step.node_id + " is waiting"));
+      if (step.prompt) { box.appendChild(runLine("pre", step.prompt)); }
+      if (step.context) { box.appendChild(runLine("pre", step.context)); }
+      box.appendChild(runLine("p", "Paste the step's result here and press resume — no chat needed.", "hint"));
+      var area = document.createElement("textarea");
+      area.rows = 3;
+      area.placeholder = "paste the step's output (a JSON object is passed as structured)";
+      area.setAttribute("aria-label", "result for agent step " + step.node_id);
+      box.appendChild(area);
+      var send = runButton("Send result & resume", function () { respond(step.node_id, area.value); });
+      send.title = TIPS["runs.resume"];
+      box.appendChild(send);
+      box.appendChild(runLine("p", "Or run this workflow from chat and the agent executes the step for you.", "hint"));
+      return;
+    }
+    if (status === "failed") {
       var error = result.error || {};
       banner("Run " + runId + " failed — " + (error.node_id ? error.node_id + ": " : "") + (error.msg || ""), "error");
-      lines.push("failed: " + (error.node_id ? error.node_id + ": " : "") + (error.msg || ""));
-    } else if (status === "done") {
+      box.appendChild(runLine("h4", "run failed"));
+      box.appendChild(runLine("pre", (error.node_id ? error.node_id + ": " : "") + (error.msg || "")));
+      return;
+    }
+    if (status === "done") {
       var outputs = result.outputs || {};
       banner("Run " + runId + " finished · outputs: " + (Object.keys(outputs).join(", ") || "(none)"), "");
-      lines.push(JSON.stringify(outputs, null, 2));
-    } else {
-      banner("Run " + runId + " · " + String(status || "unknown"), "warn");
+      box.appendChild(runLine("h4", "done · outputs: " + (Object.keys(outputs).join(", ") || "(none)")));
+      box.appendChild(runLine("pre", JSON.stringify(outputs, null, 2)));
+      return;
     }
-    showErrors(lines.map(function (text) { return { node: "", field: "run", msg: text }; }));
+    banner("Run " + runId + " · " + String(status || "unknown"), "warn");
+    box.appendChild(runLine("h4", String(status || "run")));
+    if (result.error) {
+      box.appendChild(runLine("pre", typeof result.error === "string" ? result.error : JSON.stringify(result.error)));
+    }
+  }
+
+  /** Feed a paused step's answer back in; the run panel stays mounted so it can continue. */
+  function respond(nodeId, answer) {
+    if (!lastRunId) {
+      banner("There is no paused run to answer.", "error");
+      return;
+    }
+    if (!window.fetch) {
+      banner("Cannot resume — this page has no way to reach the backend.", "error");
+      return;
+    }
+    var body = { run_id: lastRunId, node_id: nodeId, answer: answer };
+    if (answer && typeof answer === "string" && answer.trim().charAt(0) === "{") {
+      // A JSON object is passed as `structured` so downstream conditions can read fields.
+      try {
+        var parsed = JSON.parse(answer);
+        if (parsed && typeof parsed === "object") {
+          body = { run_id: lastRunId, node_id: nodeId, structured: parsed, answer: answer };
+        }
+      } catch (ignored) {
+        /* not JSON: send the text */
+      }
+    }
+    note("resuming…");
+    banner("Resuming run " + lastRunId + "…", "");
+    window.fetch(API + "/runs/" + encodeURIComponent(lastRunId) + "/respond", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(function (res) {
+      return res.json().then(function (data) { return { ok: res.ok, body: data }; });
+    }).then(function (out) {
+      if (!out.ok) {
+        var detail = (out.body && out.body.detail) || "the request failed";
+        banner("Could not resume — " + detail, "error");
+        note("");
+        return;
+      }
+      renderRun(out.body || {});
+    }).catch(function (err) {
+      var detail = err && err.message ? err.message : String(err);
+      banner("Could not resume — " + detail, "error");
+      note("");
+    });
   }
 
   /** Run the saved design now. An unsaved draft is refused with a sentence, not a 404. */
@@ -1619,6 +1791,7 @@
   refreshProfiles();
   refreshModels();
   refreshDesigns();
+  refreshChannels();
 }());
 </script>
 </body>
