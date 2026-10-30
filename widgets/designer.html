@@ -26,8 +26,11 @@
   }
   #bar .grow { flex: 1 1 180px; min-width: 120px; }
   #main { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; }
+  /* flex: 0 0 auto keeps the node bar a fixed row: as a growing item it filled the height
+     the canvas gave up when a node was selected, leaving a band of nothing above the canvas. */
   #kit {
     display: flex; gap: 4px; align-items: center; overflow-x: auto;
+    flex: 0 0 auto;
     padding: 6px 0; border-bottom: 1px solid var(--border, #3a3a3a);
   }
   #kit .tool {
@@ -39,7 +42,11 @@
     margin: 0 0 0 auto; padding-left: 8px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  #canvaswrap { flex: 1 1 auto; min-width: 0; overflow: auto; padding: 6px; }
+  /* The canvas asks for its own band, so opening the inspector cannot take it away. */
+  #canvaswrap {
+    flex: 1 1 auto; min-width: 0; overflow: auto; padding: 6px;
+    min-height: clamp(320px, calc(100dvh - 240px), 900px);
+  }
   #inspector {
     width: 252px; flex: 0 0 auto; box-sizing: border-box; padding: 4px 0 8px 10px;
     border-left: 1px solid var(--border, #3a3a3a); overflow: auto;

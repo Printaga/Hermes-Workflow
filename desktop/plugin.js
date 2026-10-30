@@ -264,21 +264,31 @@ const CSS = [
   ".vw-top{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--vw-line);background:var(--vw-surface)}",
   ".vw-top .vw-grow{flex:1 1 160px;min-width:120px}",
   ".vw-stage{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}",
-  ".vw-app{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;min-width:0;padding:6px 8px}",
-  ".vw-kit{display:flex;gap:4px;align-items:center;overflow-x:auto;flex:1 1 auto;min-width:0;padding:0 0 6px;border-bottom:1px solid var(--vw-line)}",
+  // flex:0 0 auto keeps the app content-sized: as a growing item it took whatever height the
+  // host guessed at load and then collapsed when a node was selected, so the surface moved
+  // under the pointer on the first click.
+  ".vw-app{display:flex;flex-direction:column;flex:0 0 auto;min-width:0;padding:6px 8px}",
+  // flex:0 0 auto is deliberate: the kit is a fixed row, not a spacer. As a growing flex
+  // item in the column shell it stretched to fill the height the canvas gave up when a node
+  // was selected, which drew a band of nothing between the node bar and the name row.
+  ".vw-kit{display:flex;gap:4px;align-items:center;overflow-x:auto;flex:0 0 auto;min-width:0;padding:0 0 6px;border-bottom:1px solid var(--vw-line)}",
   ".vw-tool{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;white-space:nowrap;cursor:grab}",
   ".vw-tool .ico{font-size:12px;line-height:1}",
   ".vw-kit-hint{flex:0 1 auto;margin:0 0 0 auto;padding-left:8px;font-size:11px;color:var(--vw-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
   ".vw-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--vw-line)}",
   ".vw-bar .vw-grow{flex:1 1 140px;min-width:100px}",
   ".vw-main{display:flex;flex:1 1 auto;min-height:0;min-width:0}",
-  ".vw-wrap{flex:1 1 auto;min-width:0;overflow:auto;padding:6px}",
+  // The canvas asks for its own band instead of inheriting whatever the shell left over, so
+  // opening the inspector can never take the drawing surface away.
+  ".vw-wrap{flex:1 1 auto;min-width:0;min-height:clamp(320px,calc(100dvh - 240px),900px);overflow:auto;padding:6px}",
   ".vw-inspector{flex:0 0 auto;width:252px;box-sizing:border-box;padding:4px 0 8px 10px;border-left:1px solid var(--vw-line);overflow:auto}",
   ".vw-insp-toggle{font:inherit;color:var(--vw-dim);background:none;border:0;padding:2px 4px;cursor:pointer;text-align:left}",
   ".vw-insp-toggle:hover{color:var(--vw-ink)}",
   ".vw-app.vw-insp-collapsed .vw-inspector{width:30px;padding:4px 2px;overflow:hidden}",
   ".vw-app.vw-insp-collapsed .vw-insp-body{display:none}",
-  ".vw-app.vw-insp-collapsed .vw-insp-toggle{writing-mode:vertical-rl;height:100%;font-size:10px;letter-spacing:.08em;text-transform:uppercase}",
+  // No height:100% here: a percentage inside an auto-height row is a cyclic dependency, and
+  // Chrome settled it at ~911px — the phantom band the canvas lost on the first selection.
+  ".vw-app.vw-insp-collapsed .vw-insp-toggle{writing-mode:vertical-rl;font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding-top:4px}",
   ".vw-errors,.vw-run{margin:0;padding:6px 0;border-top:1px solid var(--vw-line);white-space:pre-wrap;color:var(--vw-dim);max-height:150px;overflow:auto}",
   // A run's outcome must never be a transient word in the bar. This banner sits directly
   // above the canvas, stays until dismissed or replaced, and is announced to screen readers.

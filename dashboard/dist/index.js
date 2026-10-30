@@ -278,27 +278,39 @@
   // whole palette from tokens that DO exist, scoped to the shell so the rest of the
   // dashboard is untouched.
   var CSS = [
-    ".vw-shell{--vw-ink:var(--midground,#ffe6cb);--vw-dim:color-mix(in srgb,var(--midground,#ffe6cb) 72%,transparent);--vw-surface:color-mix(in srgb,var(--midground,#ffe6cb) 5%,var(--background,#041c1c));--vw-line:color-mix(in srgb,var(--midground,#ffe6cb) 16%,transparent);--vw-node:color-mix(in srgb,var(--midground,#ffe6cb) 7%,var(--background,#041c1c));--vw-note-yellow:color-mix(in srgb,#f2d16b 20%,var(--background,#041c1c));--vw-note-blue:color-mix(in srgb,#6ea8fe 20%,var(--background,#041c1c));--vw-note-green:color-mix(in srgb,#34d399 20%,var(--background,#041c1c));--vw-note-red:color-mix(in srgb,#fb2c36 20%,var(--background,#041c1c));--vw-accent:var(--series-output-token,#34d399);--vw-danger:#fb2c36;display:flex;flex-direction:column;height:100%;min-height:420px;min-width:0;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--vw-ink);text-align:left}",
+    ".vw-shell{--vw-ink:var(--midground,#ffe6cb);--vw-dim:color-mix(in srgb,var(--midground,#ffe6cb) 72%,transparent);--vw-surface:color-mix(in srgb,var(--midground,#ffe6cb) 5%,var(--background,#041c1c));--vw-line:color-mix(in srgb,var(--midground,#ffe6cb) 16%,transparent);--vw-node:color-mix(in srgb,var(--midground,#ffe6cb) 7%,var(--background,#041c1c));--vw-note-yellow:color-mix(in srgb,#f2d16b 20%,var(--background,#041c1c));--vw-note-blue:color-mix(in srgb,#6ea8fe 20%,var(--background,#041c1c));--vw-note-green:color-mix(in srgb,#34d399 20%,var(--background,#041c1c));--vw-note-red:color-mix(in srgb,#fb2c36 20%,var(--background,#041c1c));--vw-accent:var(--series-output-token,#34d399);--vw-danger:#fb2c36;display:flex;flex-direction:column;min-height:0;min-width:0;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--vw-ink);text-align:left}",
     ".vw-rail-title{margin:0 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--vw-dim)}",
     ".vw-list{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}",
     ".vw-top{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--vw-line);background:var(--vw-surface)}",
     ".vw-top .vw-grow{flex:1 1 160px;min-width:120px}",
     ".vw-stage{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}",
-    ".vw-app{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;min-width:0;padding:6px 8px}",
-    ".vw-kit{display:flex;gap:4px;align-items:center;overflow-x:auto;flex:1 1 auto;min-width:0;padding:0 0 6px;border-bottom:1px solid var(--vw-line)}",
+    // flex:0 0 auto keeps the app content-sized. As a growing item it inherited whatever height
+    // the host wrapper guessed at load (1010px here, far past the window) and then collapsed to
+    // 458px the moment a node was selected — the canvas lost half its band and the run box fell
+    // below the fold. A fixed basis makes the surface identical before and after a selection.
+    ".vw-app{display:flex;flex-direction:column;flex:0 0 auto;min-width:0;padding:6px 8px}",
+    // flex:0 0 auto is deliberate: the kit is a fixed row, not a spacer. As a growing flex
+    // item in the column shell it stretched to fill the height the canvas gave up when a node
+    // was selected, which drew a band of nothing between the node bar and the name row.
+    ".vw-kit{display:flex;gap:4px;align-items:center;overflow-x:auto;flex:0 0 auto;min-width:0;padding:0 0 6px;border-bottom:1px solid var(--vw-line)}",
     ".vw-tool{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;white-space:nowrap;cursor:grab}",
     ".vw-tool .ico{font-size:12px;line-height:1}",
     ".vw-kit-hint{flex:0 1 auto;margin:0 0 0 auto;padding-left:8px;font-size:11px;color:var(--vw-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
     ".vw-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--vw-line)}",
     ".vw-bar .vw-grow{flex:1 1 140px;min-width:100px}",
     ".vw-main{display:flex;flex:1 1 auto;min-width:0;min-height:0}",
-    ".vw-wrap{flex:1 1 auto;min-width:0;overflow:auto;padding:6px}",
+    // The canvas asks for its own band instead of inheriting whatever the host left over, so
+    // opening the inspector can never take the drawing surface away.
+    ".vw-wrap{flex:1 1 auto;min-width:0;min-height:clamp(320px,calc(100dvh - 240px),900px);overflow:auto;padding:6px}",
     ".vw-inspector{flex:0 0 auto;width:252px;box-sizing:border-box;padding:4px 0 8px 10px;border-left:1px solid var(--vw-line);overflow:auto}",
     ".vw-insp-toggle{font:inherit;color:var(--vw-dim);background:none;border:0;padding:2px 4px;cursor:pointer;text-align:left}",
     ".vw-insp-toggle:hover{color:var(--vw-ink)}",
     ".vw-app.vw-insp-collapsed .vw-inspector{width:30px;padding:4px 2px;overflow:hidden}",
     ".vw-app.vw-insp-collapsed .vw-insp-body{display:none}",
-    ".vw-app.vw-insp-collapsed .vw-insp-toggle{writing-mode:vertical-rl;height:100%;font-size:10px;letter-spacing:.08em;text-transform:uppercase}",
+    // No height:100% here. A percentage height inside an auto-height row is a cyclic dependency,
+    // and Chrome settled it at 911px — which is what made the canvas band 911px tall before a
+    // selection and 458px after it.
+    ".vw-app.vw-insp-collapsed .vw-insp-toggle{writing-mode:vertical-rl;font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding-top:4px}",
     ".vw-errors,.vw-run{margin:0;padding:6px 0;border-top:1px solid var(--vw-line);white-space:pre-wrap;color:var(--vw-dim);max-height:150px;overflow:auto}",
     // A run's outcome must never be a transient word in the bar. This banner sits directly
     // above the canvas, stays until dismissed or replaced, and is announced to screen readers.
