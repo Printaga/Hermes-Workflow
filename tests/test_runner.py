@@ -263,6 +263,37 @@ def test_finished_run_is_done_on_disk(tmp_path):
     assert stored["status"] == "done"
 
 
+# -- approval context, all the way to the pause -------------------------------
+def test_an_authored_approval_context_reaches_the_pause_that_shows_it():
+    """Every canvas can now author a gate's context, so the whole path must carry it.
+
+    A source-grep test only proves the box exists. This walks the value a reviewer depends on:
+    the design validates, the converter keeps it, and the paused run hands it to the card.
+    """
+    from visual_workflow_hermes.convert import build_run_plan
+    from visual_workflow_hermes.runner import new_state, run_plan
+    from visual_workflow_hermes.schema import validate_designer_graph
+
+    designer = {
+        "name": "gate",
+        "nodes": [
+            {"id": "t1", "type": "trigger", "trigger_mode": "manual", "after": []},
+            {"id": "ok", "type": "approval", "question": "Ship it?",
+             "context": "draft: three paragraphs", "options": ["ship"],
+             "after": ["t1"]},
+            {"id": "out", "type": "output", "after": ["ok"]},
+        ],
+    }
+    assert validate_designer_graph(designer) == []
+    plan = build_run_plan(designer)
+    gate = next(step for step in plan["steps"] if step["id"] == "ok")
+    assert gate["context"] == "draft: three paragraphs"
+
+    state = run_plan(plan, new_state(plan, "run1"))
+    assert state["status"] == "awaiting_approval"
+    assert state["pending"]["context"] == "draft: three paragraphs"
+
+
 # -- condition coercion, inputs, context cap (plan Task 1) -------------------
 # A confirmed crash: an agent that answers with a string field compared numerically raised a
 # bare TypeError that escaped run_plan *and* tool_run, so the dispatcher returned a 500.
