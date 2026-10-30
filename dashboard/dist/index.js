@@ -300,6 +300,14 @@
     ".vw-app.vw-insp-collapsed .vw-insp-body{display:none}",
     ".vw-app.vw-insp-collapsed .vw-insp-toggle{writing-mode:vertical-rl;height:100%;font-size:10px;letter-spacing:.08em;text-transform:uppercase}",
     ".vw-errors,.vw-run{margin:0;padding:6px 0;border-top:1px solid var(--vw-line);white-space:pre-wrap;color:var(--vw-dim);max-height:150px;overflow:auto}",
+    // A run's outcome must never be a transient word in the bar. This banner sits directly
+    // above the canvas, stays until dismissed or replaced, and is announced to screen readers.
+    ".vw-banner{display:flex;gap:8px;align-items:flex-start;margin:6px 0 0;padding:6px 8px;border:1px solid var(--vw-line);border-left:3px solid var(--vw-accent);background:var(--vw-surface);color:var(--vw-ink);white-space:pre-wrap;max-height:140px;overflow:auto}",
+    ".vw-banner[hidden]{display:none}",
+    ".vw-banner-warn{border-left-color:var(--vw-note-yellow)}",
+    ".vw-banner-error{border-left-color:var(--vw-danger);color:var(--vw-danger)}",
+    ".vw-banner p{margin:0;flex:1 1 auto;min-width:0}",
+    ".vw-banner .vw-pill{flex:0 0 auto;padding:0 6px}",
     ".vw-run h4{margin:2px 0 4px;font-size:12px;color:var(--vw-ink)}",
     ".vw-run pre{margin:2px 0 6px;white-space:pre-wrap;max-height:96px;overflow:auto}",
     ".vw-pill,select,input[type=text],textarea{font:inherit;color:inherit;background:var(--vw-node);border:1px solid var(--vw-line);border-radius:6px;padding:3px 7px}",
@@ -349,6 +357,7 @@
     '    <button class="vw-pill" type="button" data-vw="delete">Delete</button>' +
     '    <span class="vw-muted" data-vw="status"></span>' +
     '  </div>' +
+    '  <div class="vw-banner" data-vw="banner" role="status" aria-live="polite" aria-atomic="true" hidden></div>' +
     '  <div class="vw-main">' +
     '    <div class="vw-wrap" data-vw="wrap">' +
     '      <svg class="vw-canvas" data-vw="canvas" role="img" aria-label="workflow canvas"></svg>' +
@@ -359,7 +368,7 @@
     '    </div>' +
     '  </div>' +
     '  <div class="vw-run" data-vw="run"></div>' +
-    '  <pre class="vw-errors" data-vw="errors"></pre>' +
+    '  <pre class="vw-errors" data-vw="errors" hidden></pre>' +
     "</div>";
 
   function clone(value) {
@@ -426,6 +435,7 @@
       inspector: q('[data-vw="inspector"]'),
       errors: q('[data-vw="errors"]'),
       status: q('[data-vw="status"]'),
+      banner: q('[data-vw="banner"]'),
       run: q('[data-vw="run"]'),
     };
 
@@ -436,6 +446,7 @@
     var linkArm = null;   // source node id after a click on an output port
     var dragLink = null;  // live drag from an output port: {from, x1, y1, x2, y2}
     var lastRun = null;
+    var savedNames = [];   // names known to exist server-side; Run refuses a draft instead of 404ing
 
     function nodeById(id) {
       var hits = graph.nodes.filter(function (n) {
@@ -1318,12 +1329,48 @@
       el.status.textContent = message || "";
     }
 
+    /**
+     * A run's outcome, pinned above the canvas until dismissed or replaced.
+     *
+     * ``note()`` writes one line into the bar and is wiped by the next action, so a failed
+     * or paused run was invisible unless you happened to be looking at the bar. This banner
+     * is the opposite: persistent, at the top of the canvas, and announced.
+     * kind: "info" (default) | "warn" | "error". Empty message hides it.
+     */
+    function banner(message, kind) {
+      var box = el.banner;
+      box.textContent = "";
+      if (!message) {
+        box.hidden = true;
+        box.className = "vw-banner";
+        return;
+      }
+      box.hidden = false;
+      box.className = "vw-banner vw-banner-" + (kind || "info");
+      var text = document.createElement("p");
+      text.textContent = message;
+      box.appendChild(text);
+      var close = document.createElement("button");
+      close.type = "button";
+      close.className = "vw-pill";
+      close.textContent = "\u2715";
+      close.title = "Dismiss this message.";
+      close.setAttribute("aria-label", "Dismiss message");
+      close.addEventListener("click", function () {
+        banner("");
+      });
+      box.appendChild(close);
+    }
+
+    /** Validation problems go to the canvas banner AND the detail box; never a silent word. */
     function showErrors(errors) {
       var list = errors || [];
       if (!list.length) {
-        el.errors.textContent = "valid \u00b7 " + graph.nodes.length + " node(s)";
+        el.errors.textContent = "";
+        el.errors.hidden = true;
         return;
       }
+      el.errors.hidden = false;
       el.errors.textContent = list.map(function (e) {
         return (e.node ? e.node + ": " : "") + e.field + " \u2014 " + e.msg;
       }).join("\n");
@@ -1381,10 +1428,17 @@
         body: JSON.stringify({ graph: payloadGraph() }),
       }).then(function (data) {
         showErrors(data.errors || []);
-        note(data.valid ? "valid" : (data.errors || []).length + " problem(s)");
+        if (data.valid) {
+          note("valid");
+          banner("Design is valid \u00b7 " + graph.nodes.length + " node(s).", "info");
+        } else {
+          note((data.errors || []).length + " problem(s)");
+          banner("Not valid \u00b7 " + (data.errors || []).length + " problem(s) \u2014 see the details below the canvas.", "error");
+        }
       }).catch(function (err) {
         note("");
         showErrors([{ node: "", field: "request", msg: explain(err) }]);
+        banner("Validate failed \u2014 " + explain(err), "error");
       });
     }
 
@@ -1403,14 +1457,17 @@
         if (!data.ok) {
           showErrors(data.errors || []);
           note("not saved");
+          banner("Not saved \u2014 " + (data.errors || []).length + " problem(s), see the details below the canvas.", "error");
           return;
         }
         showErrors([]);
         note("saved " + data.name + " (" + data.nodes + " node(s))");
+        banner("Saved \u201c" + data.name + "\u201d \u00b7 " + data.nodes + " node(s).", "info");
         onSaved();
       }).catch(function (err) {
         note("");
         showErrors([{ node: "", field: "save", msg: explain(err) }]);
+        banner("Save failed \u2014 " + explain(err), "error");
       });
     }
 
@@ -1418,13 +1475,23 @@
       var name = currentName();
       if (!name) {
         showErrors([{ node: "", field: "name", msg: "save the design first" }]);
+        banner("Name the design and press Save before running it.", "error");
+        return;
+      }
+      // A draft that was never saved has no server-side design to run: saying so beats a 404.
+      if (savedNames.indexOf(name) < 0) {
+        showErrors([{ node: "", field: "name", msg: name + " is not saved yet" }]);
+        note("not run");
+        banner("\u201c" + name + "\u201d is not saved yet \u2014 press Save, then Run.", "error");
         return;
       }
       note("running " + name + "\u2026");
+      banner("Running \u201c" + name + "\u201d\u2026", "info");
       call(path(name) + "/run", { method: "POST" }).then(function (data) {
         if (data.status === "invalid") {
           showErrors(data.errors || []);
           note("not run");
+          banner("Not run \u2014 the design has " + (data.errors || []).length + " problem(s).", "error");
           return;
         }
         showErrors([]);
@@ -1432,6 +1499,7 @@
       }).catch(function (err) {
         note("");
         showErrors([{ node: "", field: "run", msg: explain(err) }]);
+        banner("Run failed \u2014 " + explain(err), "error");
       });
     }
 
@@ -1461,6 +1529,7 @@
       }).catch(function (err) {
         note("");
         el.run.textContent = explain(err);
+        banner("Could not resume the run \u2014 " + explain(err), "error");
       });
     }
 
@@ -1520,9 +1589,12 @@
       box.textContent = "";
       var status = result.status;
       note(String(status || ""));
+      // The run box lives under the canvas where it can be scrolled out of sight; bring it in.
+      if (box.scrollIntoView) box.scrollIntoView({ block: "nearest" });
 
       if (status === "awaiting_approval") {
         var pending = result.pending || {};
+        banner("Run " + (result.run_id || "") + " paused at gate " + pending.node_id + " \u2014 answer it below.", "warn");
         box.appendChild(line("h4", "gate " + pending.node_id + ": " + (pending.question || "")));
         if (pending.context) box.appendChild(line("pre", pending.context));
         var wait = waitLine(pending);
@@ -1550,6 +1622,14 @@
 
       if (status === "awaiting_agent") {
         var step = result.pending || {};
+        // The dashboard has no subagent backend, so an agent step always parks here. Say so
+        // plainly: a run that quietly waits looks exactly like a run that did nothing.
+        banner(
+          "Run " + (result.run_id || "") + " paused at agent step " + step.node_id +
+          " \u2014 this dashboard cannot run an agent, so paste its result below (or run the " +
+          "workflow from chat, where the agent executes).",
+          "warn"
+        );
         box.appendChild(line("h4", "agent step " + step.node_id + " is waiting"));
         box.appendChild(line("pre", step.prompt || ""));
         if (step.context) box.appendChild(line("pre", step.context));
@@ -1565,6 +1645,7 @@
 
       if (status === "failed") {
         var error = result.error || {};
+        banner("Run " + (result.run_id || "") + " failed \u2014 " + (error.node_id ? error.node_id + ": " : "") + (error.msg || ""), "error");
         box.appendChild(line("h4", "run failed"));
         box.appendChild(line("pre", (error.node_id ? error.node_id + ": " : "") + (error.msg || "")));
         var failedDelivery = deliveryLine(result);
@@ -1574,6 +1655,7 @@
 
       if (status === "done") {
         var outputs = result.outputs || {};
+        banner("Run " + (result.run_id || "") + " finished \u00b7 outputs: " + (Object.keys(outputs).join(", ") || "(none)"), "info");
         box.appendChild(line("h4", "done \u00b7 outputs: " + (Object.keys(outputs).join(", ") || "(none)")));
         if ((result.skipped || []).length) {
           box.appendChild(line("p", "skipped: " + result.skipped.join(", "), "vw-muted"));
@@ -1584,6 +1666,7 @@
         return;
       }
 
+      banner("Run " + (result.run_id || "") + " \u00b7 " + String(status || "unknown"), "warn");
       box.appendChild(line("h4", String(status || "run")));
       if (result.error) box.appendChild(line("pre", typeof result.error === "string" ? result.error : JSON.stringify(result.error)));
     }
@@ -1652,7 +1735,9 @@
       lastRun = null;
       el.run.textContent = "";
       el.errors.textContent = "";
+      el.errors.hidden = true;
       note("");
+      banner("");
       el.name.value = graph.name;
       setInspector(false);
       layout();
@@ -1671,6 +1756,10 @@
       setChannels: function (list) {
         channels = Array.isArray(list) ? list : [];
         buildInspector();
+      },
+      /** Names known to exist server-side, so Run can refuse a draft instead of sending a 404. */
+      setDesigns: function (list) {
+        savedNames = Array.isArray(list) ? list.slice() : [];
       },
       /** The draft graph as it would be sent to the backend. */
       getGraph: payloadGraph,
@@ -1958,6 +2047,9 @@
     var refresh = useCallback(function () {
       return fetchJSON(API + "/designs").then(function (data) {
         setDesigns((data && data.designs) || []);
+        // Run needs to know which names exist server-side, so a draft is refused with a
+        // sentence instead of a 404 nobody sees.
+        if (designerRef.current) designerRef.current.setDesigns((data && data.designs) || []);
       }).catch(function (err) {
         setError(explain(err));
       });

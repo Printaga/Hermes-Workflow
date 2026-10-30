@@ -55,6 +55,19 @@
     writing-mode: vertical-rl; height: 100%; font-size: 10px;
     letter-spacing: .08em; text-transform: uppercase;
   }
+  /* A run's outcome must not be a word that scrolls away: pinned above the canvas,
+     announced, dismissed by its own button. */
+  #banner {
+    display: flex; gap: 8px; align-items: flex-start; margin: 6px 0 0;
+    padding: 6px 8px; border: 1px solid var(--border, #3a3a3a);
+    border-left: 3px solid var(--accent, #6ea8fe);
+    color: var(--foreground, #d8d8d8); white-space: pre-wrap;
+    max-height: 120px; overflow: auto;
+  }
+  #banner[hidden] { display: none; }
+  #banner.warn { border-left-color: var(--vw-note-yellow); }
+  #banner.error { border-left-color: var(--vw-danger); color: var(--vw-danger); }
+  #banner p { margin: 0; flex: 1 1 auto; min-width: 0; }
   #errors {
     margin: 0; padding: 6px 0; max-height: 108px; overflow: auto;
     white-space: pre-wrap; border-top: 1px solid var(--border, #3a3a3a);
@@ -103,6 +116,7 @@
   <div id="bar">
     <input id="name" class="grow" type="text" value="hello-world" aria-label="design name">
     <button class="pill" id="validate" type="button">Validate</button>
+    <button class="pill" id="run" type="button">Run</button>
     <button class="pill" id="copy" type="button">Copy JSON</button>
     <button class="pill" id="load" type="button">Load example</button>
     <button class="pill" id="connect" type="button">Connect</button>
@@ -117,7 +131,8 @@
       <div id="insp-body"></div>
     </div>
   </div>
-  <pre id="errors"></pre>
+  <div id="banner" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+  <pre id="errors" hidden></pre>
 </div>
 
 <script id="default-graph" type="application/json">
@@ -1199,20 +1214,193 @@
   }
 
   // -------------------------------------------------------------- feedback
+  /** A one-word status in the detail box. Never write into a hidden box: a note nobody
+   *  can see is the same as no note at all. */
   function note(message) {
     var box = document.getElementById("errors");
     box.textContent = message || "";
+    box.hidden = !message;
+  }
+
+  /** A run's outcome, pinned above the canvas until dismissed or replaced. `note()` writes
+   *  one word into the detail box and is wiped by the next action, so a failed or paused run
+   *  was invisible unless you happened to be looking there. `kind` is "info" | "warn" |
+   *  "error"; an empty message hides the banner. */
+  function banner(message, kind) {
+    var box = document.getElementById("banner");
+    box.textContent = "";
+    if (!message) {
+      box.hidden = true;
+      box.className = "";
+      return;
+    }
+    box.hidden = false;
+    box.className = kind || "";
+    var text = document.createElement("p");
+    text.textContent = message;
+    box.appendChild(text);
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "pill";
+    close.textContent = "✕";
+    close.title = "Dismiss this message.";
+    close.setAttribute("aria-label", "Dismiss message");
+    close.addEventListener("click", function () { banner(""); });
+    box.appendChild(close);
+  }
+
+  /** The one place a validation verdict is announced: banner first, details second. */
+  function reportValid(errors) {
+    showErrors(errors);
+    if (!errors.length) {
+      note("valid");
+      banner("Design is valid · " + graph.nodes.length + " node(s).", "");
+      return false;
+    }
+    note(errors.length + " problem(s)");
+    banner("Not valid · " + errors.length + " problem(s) — see the details below the canvas.", "error");
+    return true;
   }
 
   function showErrors(errors) {
     var box = document.getElementById("errors");
     if (!errors.length) {
-      box.textContent = "valid · " + graph.nodes.length + " node(s)";
+      box.textContent = "";
+      box.hidden = true;
       return;
     }
+    box.hidden = false;
     box.textContent = errors.map(function (e) {
       return (e.node ? e.node + ": " : "") + e.field + " — " + e.msg;
     }).join("\n");
+  }
+
+  // -------------------------------------------------------------- run
+  var API = "/api/plugins/visual-workflow";
+  var savedNames = [];  // designs the backend already has, so Run can refuse a draft by name
+
+  /** Remember which names are saved: a draft has no server-side design to run. */
+  function refreshDesigns() {
+    if (!window.fetch) { return; }
+    window.fetch(API + "/designs", { credentials: "same-origin" })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) { savedNames = (data && data.designs) || []; })
+      .catch(function () { savedNames = []; });
+  }
+
+  /** Announce a run's outcome above the canvas. A run that pauses must say so: a run that
+   *  quietly waits looks exactly like a run that did nothing. */
+  function renderRun(result) {
+    var status = result.status;
+    var runId = result.run_id || "";
+    var lines = [];
+    if (status === "awaiting_approval") {
+      var gate = result.pending || {};
+      banner("Run " + runId + " paused at gate " + gate.node_id + " — answer it in chat with workflow respond.", "warn");
+      lines.push("gate " + gate.node_id + ": " + (gate.question || ""));
+      if (gate.options && gate.options.length) { lines.push("options: " + gate.options.join(", ")); }
+    } else if (status === "awaiting_agent") {
+      var step = result.pending || {};
+      banner("Run " + runId + " paused at agent step " + step.node_id + " — this designer cannot run an agent, so finish it from chat.", "warn");
+      lines.push("agent step " + step.node_id + " is waiting");
+      if (step.prompt) { lines.push(step.prompt); }
+    } else if (status === "failed") {
+      var error = result.error || {};
+      banner("Run " + runId + " failed — " + (error.node_id ? error.node_id + ": " : "") + (error.msg || ""), "error");
+      lines.push("failed: " + (error.node_id ? error.node_id + ": " : "") + (error.msg || ""));
+    } else if (status === "done") {
+      var outputs = result.outputs || {};
+      banner("Run " + runId + " finished · outputs: " + (Object.keys(outputs).join(", ") || "(none)"), "");
+      lines.push(JSON.stringify(outputs, null, 2));
+    } else {
+      banner("Run " + runId + " · " + String(status || "unknown"), "warn");
+    }
+    showErrors(lines.map(function (text) { return { node: "", field: "run", msg: text }; }));
+  }
+
+  /** Run the saved design now. An unsaved draft is refused with a sentence, not a 404. */
+  function runDesign() {
+    var name = (graph.name || "").trim();
+    if (!name) {
+      banner("Name the workflow before running it.", "error");
+      return;
+    }
+    if (savedNames.indexOf(name) < 0) {
+      showErrors([{ node: "", field: "name", msg: name + " is not saved yet" }]);
+      note("not run");
+      banner("“" + name + "” is not saved yet — press Save to Hermes, then Run.", "error");
+      return;
+    }
+    if (!window.fetch) {
+      banner("Run failed — this page has no way to reach the backend.", "error");
+      return;
+    }
+    note("running " + name + "…");
+    banner("Running “" + name + "”…", "");
+    window.fetch(API + "/designs/" + encodeURIComponent(name) + "/run", {
+      method: "POST", credentials: "same-origin",
+    }).then(function (res) {
+      return res.json().then(function (body) { return { ok: res.ok, body: body }; });
+    }).then(function (out) {
+      if (!out.ok) {
+        var detail = (out.body && out.body.detail) || "the request failed";
+        showErrors([{ node: "", field: "run", msg: detail }]);
+        note("");
+        banner("Run failed — " + detail, "error");
+        return;
+      }
+      if (out.body && out.body.status === "invalid") {
+        showErrors(out.body.errors || []);
+        note("not run");
+        banner("Not run — the design has " + (out.body.errors || []).length + " problem(s).", "error");
+        return;
+      }
+      renderRun(out.body || {});
+    }).catch(function (err) {
+      var detail = err && err.message ? err.message : String(err);
+      showErrors([{ node: "", field: "run", msg: detail }]);
+      note("");
+      banner("Run failed — " + detail, "error");
+    });
+  }
+
+  /** Validate against the server when it is reachable (it is the authority), locally otherwise.
+   *  A request that fails is said out loud instead of quietly doing nothing. */
+  function validateNow() {
+    if (!window.fetch) {
+      reportValid(validateGraph(graph));
+      return;
+    }
+    var name = (graph.name || "").trim() || "untitled";
+    note("validating…");
+    window.fetch(API + "/designs/" + encodeURIComponent(name) + "/validate", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ graph: { name: graph.name || "workflow", nodes: graph.nodes } }),
+    }).then(function (res) {
+      return res.json().then(function (body) { return { ok: res.ok, body: body }; });
+    }).then(function (out) {
+      if (!out.ok) {
+        var detail = (out.body && out.body.detail) || "the request failed";
+        showErrors([{ node: "", field: "validate", msg: detail }]);
+        note("");
+        banner("Validate failed — " + detail, "error");
+        return;
+      }
+      var errors = (out.body && out.body.errors) || [];
+      showErrors(errors);
+      if (!errors.length) {
+        note("valid");
+        banner("Design is valid · " + graph.nodes.length + " node(s).", "");
+      } else {
+        note(errors.length + " problem(s)");
+        banner("Not valid · " + errors.length + " problem(s) — see the details below the canvas.", "error");
+      }
+    }).catch(function () {
+      // No backend (a bare file:// preview): the local validator is the only authority left.
+      reportValid(validateGraph(graph));
+    });
   }
 
   // -------------------------------------------------------------- commands
@@ -1303,6 +1491,7 @@
     buildInspector();
     draw();
     showErrors([]);
+    banner("");
   }
 
   // ------------------------------------------------------------- wiring up
@@ -1311,9 +1500,8 @@
       graph.name = ev.target.value.trim();
     });
 
-    document.getElementById("validate").addEventListener("click", function () {
-      showErrors(validateGraph(graph));
-    });
+    document.getElementById("validate").addEventListener("click", validateNow);
+    document.getElementById("run").addEventListener("click", runDesign);
 
     document.getElementById("copy").addEventListener("click", function () {
       var text = designerJson();
@@ -1331,8 +1519,8 @@
     document.getElementById("connect").title = TIPS["bar.connect"];
     document.getElementById("save").title = "Hand the designer JSON to Hermes as a workflow save message.";
     document.getElementById("load").addEventListener("click", loadExample);
-    document.getElementById("connect").addEventListener("click", connect);
     document.getElementById("save").addEventListener("click", saveToHermes);
+    document.getElementById("run").title = "Run the saved workflow now and report the outcome above the canvas.";
 
     document.getElementById("insp-toggle").addEventListener("click", function () {
       setInspector(document.getElementById("app").classList.contains("collapsed"));
@@ -1380,6 +1568,7 @@
   buildInspector();
   draw();
   refreshProfiles();
+  refreshDesigns();
 }());
 </script>
 </body>

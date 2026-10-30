@@ -280,6 +280,14 @@ const CSS = [
   ".vw-app.vw-insp-collapsed .vw-insp-body{display:none}",
   ".vw-app.vw-insp-collapsed .vw-insp-toggle{writing-mode:vertical-rl;height:100%;font-size:10px;letter-spacing:.08em;text-transform:uppercase}",
   ".vw-errors,.vw-run{margin:0;padding:6px 0;border-top:1px solid var(--vw-line);white-space:pre-wrap;color:var(--vw-dim);max-height:150px;overflow:auto}",
+  // A run's outcome must never be a transient word in the bar. This banner sits directly
+  // above the canvas, stays until dismissed or replaced, and is announced to screen readers.
+  ".vw-banner{display:flex;gap:8px;align-items:flex-start;margin:6px 0 0;padding:6px 8px;border:1px solid var(--vw-line);border-left:3px solid var(--vw-accent);background:var(--vw-surface);color:var(--vw-ink);white-space:pre-wrap;max-height:140px;overflow:auto}",
+  ".vw-banner[hidden]{display:none}",
+  ".vw-banner-warn{border-left-color:var(--vw-note-yellow)}",
+  ".vw-banner-error{border-left-color:var(--vw-danger);color:var(--vw-danger)}",
+  ".vw-banner p{margin:0;flex:1 1 auto;min-width:0}",
+  ".vw-banner .vw-pill{flex:0 0 auto;padding:0 6px}",
   ".vw-run h4{margin:2px 0 4px;font-size:12px;color:var(--vw-ink)}",
   ".vw-run pre{margin:2px 0 6px;white-space:pre-wrap;max-height:96px;overflow:auto}",
   ".vw-pill,select,input[type=text],textarea{font:inherit;color:inherit;background:var(--vw-node);border:1px solid var(--vw-line);border-radius:6px;padding:3px 7px}",
@@ -344,6 +352,7 @@ const TEMPLATE =
   '      <button class="vw-pill" type="button" data-vw="delete">Delete</button>' +
   '      <span class="vw-muted" data-vw="status"></span>' +
   "    </div>" +
+  '    <div class="vw-banner" data-vw="banner" role="status" aria-live="polite" aria-atomic="true" hidden></div>' +
   '    <div class="vw-main">' +
   '      <div class="vw-wrap" data-vw="wrap">' +
   '        <svg class="vw-canvas" data-vw="canvas" role="img" aria-label="workflow canvas"></svg>' +
@@ -354,7 +363,7 @@ const TEMPLATE =
   "      </div>" +
   "    </div>" +
   '    <div class="vw-run" data-vw="run"></div>' +
-  '    <pre class="vw-errors" data-vw="errors"></pre>' +
+  '    <pre class="vw-errors" data-vw="errors" hidden></pre>' +
   "  </div>" +
   "</div>";
 
@@ -429,6 +438,7 @@ function createDesigner(host, call) {
     inspector: q('[data-vw="inspector"]'),
     errors: q('[data-vw="errors"]'),
     status: q('[data-vw="status"]'),
+    banner: q('[data-vw="banner"]'),
     run: q('[data-vw="run"]'),
   };
 
@@ -444,6 +454,7 @@ function createDesigner(host, call) {
   let profiles = [];    // host profiles ("bots") offered to agent nodes
   let channels = [];    // delivery targets ("chats") offered to output nodes
   let lastRun = null;
+  let savedNames = [];  // names known to exist server-side; Run refuses a draft instead of 404ing
 
   function nodeById(id) {
     const hits = graph.nodes.filter((n) => n.id === id);
@@ -1302,12 +1313,46 @@ function createDesigner(host, call) {
     el.status.textContent = message || "";
   }
 
+  /**
+   * A run's outcome, pinned above the canvas until dismissed or replaced.
+   *
+   * ``note()`` writes one line into the bar and is wiped by the next action, so a failed
+   * or paused run was invisible unless you happened to be looking at the bar. This banner
+   * is the opposite: persistent, at the top of the canvas, and announced.
+   * kind: "info" (default) | "warn" | "error". Empty message hides it.
+   */
+  function banner(message, kind) {
+    const box = el.banner;
+    box.textContent = "";
+    if (!message) {
+      box.hidden = true;
+      box.className = "vw-banner";
+      return;
+    }
+    box.hidden = false;
+    box.className = "vw-banner vw-banner-" + (kind || "info");
+    const text = document.createElement("p");
+    text.textContent = message;
+    box.appendChild(text);
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "vw-pill";
+    close.textContent = "\u2715";
+    close.title = "Dismiss this message.";
+    close.setAttribute("aria-label", "Dismiss message");
+    close.addEventListener("click", () => banner(""));
+    box.appendChild(close);
+  }
+
+  /** Validation problems go to the canvas banner AND the detail box; never a silent word. */
   function showErrors(errors) {
     const list = errors || [];
     if (!list.length) {
-      el.errors.textContent = "valid \u00b7 " + graph.nodes.length + " node(s)";
+      el.errors.textContent = "";
+      el.errors.hidden = true;
       return;
     }
+    el.errors.hidden = false;
     el.errors.textContent = list.map((e) => {
       return (e.node ? e.node + ": " : "") + e.field + " \u2014 " + e.msg;
     }).join("\n");
@@ -1756,6 +1801,9 @@ function createDesigner(host, call) {
   function refreshDesigns() {
     return call("/designs").then((data) => {
       designs = (data && data.designs) || [];
+      // Run needs to know which names exist server-side, so a draft is refused with a
+      // sentence instead of a 404 nobody sees.
+      savedNames = designs.slice();
       el.railError.textContent = "";
       renderDesigns();
     }).catch((err) => {
@@ -1825,10 +1873,17 @@ function createDesigner(host, call) {
       body: { graph: payloadGraph() },
     }).then((data) => {
       showErrors(data.errors || []);
-      note(data.valid ? "valid" : (data.errors || []).length + " problem(s)");
+      if (data.valid) {
+        note("valid");
+        banner("Design is valid \u00b7 " + graph.nodes.length + " node(s).", "info");
+      } else {
+        note((data.errors || []).length + " problem(s)");
+        banner("Not valid \u00b7 " + (data.errors || []).length + " problem(s) \u2014 see the details below the canvas.", "error");
+      }
     }).catch((err) => {
       note("");
       showErrors([{ node: "", field: "request", msg: explain(err) }]);
+      banner("Validate failed \u2014 " + explain(err), "error");
     });
   }
 
@@ -1846,15 +1901,18 @@ function createDesigner(host, call) {
       if (!data.ok) {
         showErrors(data.errors || []);
         note("not saved");
+        banner("Not saved \u2014 " + (data.errors || []).length + " problem(s), see the details below the canvas.", "error");
         return;
       }
       active = name;
       showErrors([]);
       note("saved " + data.name + " (" + data.nodes + " node(s))");
+      banner("Saved \u201c" + data.name + "\u201d \u00b7 " + data.nodes + " node(s).", "info");
       refreshDesigns();
     }).catch((err) => {
       note("");
       showErrors([{ node: "", field: "save", msg: explain(err) }]);
+      banner("Save failed \u2014 " + explain(err), "error");
     });
   }
 
@@ -1862,13 +1920,23 @@ function createDesigner(host, call) {
     const name = currentName();
     if (!name) {
       showErrors([{ node: "", field: "name", msg: "save the design first" }]);
+      banner("Name the design and press Save before running it.", "error");
+      return;
+    }
+    // A draft that was never saved has no server-side design to run: saying so beats a 404.
+    if (!savedNames.includes(name)) {
+      showErrors([{ node: "", field: "name", msg: name + " is not saved yet" }]);
+      note("not run");
+      banner("\u201c" + name + "\u201d is not saved yet \u2014 press Save, then Run.", "error");
       return;
     }
     note("running " + name + "\u2026");
+    banner("Running \u201c" + name + "\u201d\u2026", "info");
     call(designPath(name) + "/run", { method: "POST" }).then((data) => {
       if (data.status === "invalid") {
         showErrors(data.errors || []);
         note("not run");
+        banner("Not run \u2014 the design has " + (data.errors || []).length + " problem(s).", "error");
         return;
       }
       showErrors([]);
@@ -1876,6 +1944,7 @@ function createDesigner(host, call) {
     }).catch((err) => {
       note("");
       showErrors([{ node: "", field: "run", msg: explain(err) }]);
+      banner("Run failed \u2014 " + explain(err), "error");
     });
   }
 
@@ -1906,6 +1975,7 @@ function createDesigner(host, call) {
     }).catch((err) => {
       note("");
       el.run.textContent = explain(err);
+      banner("Could not resume the run \u2014 " + explain(err), "error");
     });
   }
 
@@ -1956,9 +2026,12 @@ function createDesigner(host, call) {
     box.textContent = "";
     const status = result.status;
     note(String(status || ""));
+    // The run box lives under the canvas where it can be scrolled out of sight; bring it in.
+    if (box.scrollIntoView) box.scrollIntoView({ block: "nearest" });
 
     if (status === "awaiting_approval") {
       const pending = result.pending || {};
+      banner("Run " + (result.run_id || "") + " paused at gate " + pending.node_id + " \u2014 answer it below.", "warn");
       box.appendChild(line("h4", "gate " + pending.node_id + ": " + (pending.question || "")));
       if (pending.context) box.appendChild(line("pre", pending.context));
       const wait = waitLine(pending);
@@ -1986,6 +2059,14 @@ function createDesigner(host, call) {
 
     if (status === "awaiting_agent") {
       const step = result.pending || {};
+      // The desktop canvas has no subagent backend either, so an agent step parks here. Say
+      // so plainly: a run that quietly waits looks exactly like a run that did nothing.
+      banner(
+        "Run " + (result.run_id || "") + " paused at agent step " + step.node_id +
+        " \u2014 this canvas cannot run an agent, so paste its result below (or run the " +
+        "workflow from chat, where the agent executes).",
+        "warn"
+      );
       box.appendChild(line("h4", "agent step " + step.node_id + " is waiting"));
       box.appendChild(line("pre", step.prompt || ""));
       if (step.context) box.appendChild(line("pre", step.context));
@@ -2001,6 +2082,7 @@ function createDesigner(host, call) {
 
     if (status === "failed") {
       const error = result.error || {};
+      banner("Run " + (result.run_id || "") + " failed \u2014 " + (error.node_id ? error.node_id + ": " : "") + (error.msg || ""), "error");
       box.appendChild(line("h4", "run failed"));
       box.appendChild(line("pre", (error.node_id ? error.node_id + ": " : "") + (error.msg || "")));
       const failedDelivery = deliveryLine(result);
@@ -2010,6 +2092,7 @@ function createDesigner(host, call) {
 
     if (status === "done") {
       const outputs = result.outputs || {};
+      banner("Run " + (result.run_id || "") + " finished \u00b7 outputs: " + (Object.keys(outputs).join(", ") || "(none)"), "info");
       box.appendChild(line("h4", "done \u00b7 outputs: " + (Object.keys(outputs).join(", ") || "(none)")));
       if ((result.skipped || []).length) {
         box.appendChild(line("p", "skipped: " + result.skipped.join(", "), "vw-muted"));
@@ -2020,6 +2103,7 @@ function createDesigner(host, call) {
       return;
     }
 
+    banner("Run " + (result.run_id || "") + " \u00b7 " + String(status || "unknown"), "warn");
     box.appendChild(line("h4", String(status || "run")));
     if (result.error) {
       box.appendChild(line("pre", typeof result.error === "string" ? result.error : JSON.stringify(result.error)));
@@ -2104,7 +2188,9 @@ function createDesigner(host, call) {
     lastRun = null;
     el.run.textContent = "";
     el.errors.textContent = "";
+    el.errors.hidden = true;
     note("");
+    banner("");
     el.name.value = graph.name;
     setInspector(false);
     layout();
