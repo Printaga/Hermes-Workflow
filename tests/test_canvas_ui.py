@@ -142,6 +142,16 @@ def test_the_model_picker_is_a_select_over_the_host_catalog(canvas):
     assert "not listed" in body, f"{name} drops a model the catalog does not list"
 
 
+# ------------------------------------------------------------ reviewer context
+def test_a_paused_run_shows_the_context_it_was_given(canvas):
+    name, source = canvas
+    # A gate's context is the material being approved; an agent pause's context is what that
+    # step will see. Both travel in ``pending``, so a copy that drops them makes someone
+    # decide with less information than the backend already sent.
+    hits = re.findall(r"\b(?:pending|gate|step)\.context\b", body_of(source, "renderRun"))
+    assert len(hits) >= 2, f"{name} drops the context a paused run carries: {hits}"
+
+
 @pytest.mark.parametrize("name", ["dashboard", "desktop"])
 def test_the_collapsed_inspector_does_not_ask_for_a_percentage_height(name):
     source = CANVASES[name].read_text(encoding="utf-8")

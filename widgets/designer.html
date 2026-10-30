@@ -1341,12 +1341,16 @@
       var gate = result.pending || {};
       banner("Run " + runId + " paused at gate " + gate.node_id + " — answer it in chat with workflow respond.", "warn");
       lines.push("gate " + gate.node_id + ": " + (gate.question || ""));
+      // The context is the material being approved; dropping it asks for a decision with
+      // less information than the backend already sent.
+      if (gate.context) { lines.push(gate.context); }
       if (gate.options && gate.options.length) { lines.push("options: " + gate.options.join(", ")); }
     } else if (status === "awaiting_agent") {
       var step = result.pending || {};
       banner("Run " + runId + " paused at agent step " + step.node_id + " — this designer cannot run an agent, so finish it from chat.", "warn");
       lines.push("agent step " + step.node_id + " is waiting");
       if (step.prompt) { lines.push(step.prompt); }
+      if (step.context) { lines.push(step.context); }
     } else if (status === "failed") {
       var error = result.error || {};
       banner("Run " + runId + " failed — " + (error.node_id ? error.node_id + ": " : "") + (error.msg || ""), "error");
