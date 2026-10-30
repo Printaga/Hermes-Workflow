@@ -2,8 +2,8 @@
 
 The host owns profiles (``hermes_cli.profiles.list_profiles``, behind ``GET /api/profiles``).
 The plugin only reads them: the dashboard picker lists them, and a chosen profile supplies the
-model/provider an agent step runs on unless the node overrides them. No host package is
-required for any of it — every lookup degrades to "no profile" instead of raising.
+model an agent step runs on unless the node overrides it. No host package is required for any
+of it — every lookup degrades to "no profile" instead of raising.
 """
 from __future__ import annotations
 
@@ -55,7 +55,9 @@ def test_lists_profiles_with_a_display_label(host):
     assert listed[0]["label"] == "default"
     assert listed[0]["is_default"] is True
     assert listed[1]["label"] == "Writer bot"
-    assert listed[1]["model"] == "claude" and listed[1]["provider"] == "anthropic"
+    assert listed[1]["model"] == "claude"
+    # The provider is not a node/profile field any more: it is derived from the model.
+    assert "provider" not in listed[1]
 
 
 def test_listing_is_lazy_so_the_picker_can_poll(host):
@@ -80,30 +82,21 @@ def test_a_broken_registry_yields_no_profiles(monkeypatch):
     assert profiles.list_host_profiles() == []
 
 
-# ------------------------------------------------------------ model/provider
-def test_a_profile_supplies_model_and_provider(host):
-    assert profiles.step_model_provider({"profile": "writer"}) == ("claude", "anthropic")
+# --------------------------------------------------------------------- model
+def test_a_profile_supplies_its_model(host):
+    assert profiles.step_model({"profile": "writer"}) == "claude"
 
 
-def test_explicit_node_fields_win_over_the_profile(host):
-    assert profiles.step_model_provider(
-        {"profile": "writer", "model": "o3", "provider": "openai"}
-    ) == ("o3", "openai")
-
-
-def test_a_half_override_keeps_the_missing_half_from_the_profile(host):
-    assert profiles.step_model_provider({"profile": "writer", "model": "o3"}) == (
-        "o3",
-        "anthropic",
-    )
+def test_an_explicit_node_model_wins_over_the_profile(host):
+    assert profiles.step_model({"profile": "writer", "model": "o3"}) == "o3"
 
 
 def test_an_unknown_profile_leaves_the_host_default(host):
-    assert profiles.step_model_provider({"profile": "ghost"}) == (None, None)
+    assert profiles.step_model({"profile": "ghost"}) is None
 
 
-def test_no_profile_and_no_fields_is_no_override():
-    assert profiles.step_model_provider({}) == (None, None)
+def test_no_profile_and_no_model_is_no_override():
+    assert profiles.step_model({}) is None
 
 
 # --------------------------------------------------------------- passthrough

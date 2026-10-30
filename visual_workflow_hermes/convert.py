@@ -7,7 +7,7 @@ functions, no I/O, no Hermes imports — unit-testable standalone.
 Mapping:
   trigger   -> dropped; recorded in plan["meta"]["trigger"]
   note      -> dropped (annotation for the reader, never a run step)
-  agent     -> {"kind": "agent", "prompt", ...passthrough profile/model/provider/schema/inputs/timeout}
+  agent     -> {"kind": "agent", "prompt", ...passthrough profile/model/schema/inputs/timeout}
   condition -> {"kind": "condition", "expression"}
   approval  -> {"kind": "approval", "question", "options"}
   output    -> {"kind": "output", "keys": [<parent ids>], ...passthrough deliver/target}
@@ -58,8 +58,9 @@ def build_run_plan(designer: dict) -> dict:
         step: dict = {"id": n.get("id"), "kind": kind, "after": after}
         if kind == "agent":
             step["prompt"] = n.get("prompt", "")
-            for key in ("profile", "model", "provider", "schema", "inputs", "timeout",
-                        "retries"):
+            # No ``provider``: a step names a model, and the runtime derives the provider
+            # from the host catalog (``models.provider_for_model``).
+            for key in ("profile", "model", "schema", "inputs", "timeout", "retries"):
                 if n.get(key) is not None:
                     step[key] = n[key]
         elif kind == "condition":

@@ -27,6 +27,7 @@ from fastapi import APIRouter, Body, HTTPException  # noqa: E402
 from visual_workflow_hermes.channels import list_host_channels  # noqa: E402
 from visual_workflow_hermes.convert import build_run_plan  # noqa: E402
 from visual_workflow_hermes.delivery import deliver_output  # noqa: E402
+from visual_workflow_hermes.models import clear_cache as clear_model_cache, list_host_models  # noqa: E402
 from visual_workflow_hermes.profiles import list_host_profiles  # noqa: E402
 from visual_workflow_hermes.runner import (  # noqa: E402
     StepError,
@@ -111,6 +112,19 @@ def _load_run(run_id: str) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/models")
+def list_models(refresh: bool = False) -> dict:
+    """Host model catalog for the agent-node picker.
+
+    The same host call behind ``GET /api/model/options`` (flattened to providers + model ids).
+    Always 200: an empty list with ``available: false`` is the honest answer when the catalog
+    cannot be read, and the canvas then falls back to a free-text model field.
+    """
+    if refresh:
+        clear_model_cache()
+    return list_host_models()
 
 
 @router.get("/profiles")

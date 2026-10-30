@@ -50,6 +50,9 @@ SAVE_ROUTE = ("/designs/{name}", "post")
 # The agent-node picker lists host profiles; the canvas falls back to a text field when the
 # host registry is unreadable, so this route answers 200 with an empty list rather than 500.
 PROFILES_ROUTE = ("/profiles", "get")
+# The agent-node model picker reads the host catalog through the plugin, so the canvas can use a
+# select instead of a free-text id. Answered 200 with ``available: false`` when unreadable.
+MODELS_ROUTE = ("/models", "get")
 
 
 @pytest.fixture(scope="module")
@@ -118,6 +121,7 @@ def test_router_declares_the_dashboard_routes():
     assert not missing, f"plugin_api.py is missing routes: {sorted(missing)}"
     assert SAVE_ROUTE in routes
     assert PROFILES_ROUTE in routes
+    assert MODELS_ROUTE in routes
 
 
 def test_router_is_a_module_level_apirouter():

@@ -45,11 +45,14 @@ def _subagent_spawn(ctx):
     def spawn(step, outputs, run):
         from agent.subagent_lifecycle import SubagentLaunchRequest
 
-        from .profiles import step_model_provider
+        from .models import provider_for_model
+        from .profiles import step_model
         from .runner import render_context
 
-        # A chosen profile ("bot") supplies model/provider unless the node overrides them.
-        model, provider = step_model_provider(step)
+        # A chosen profile ("bot") supplies the model unless the node overrides it; the
+        # provider is looked up from that model in the host catalog (never a node field).
+        model = step_model(step)
+        provider = provider_for_model(model) if model else None
         metadata = {"workflow_profile": step["profile"]} if step.get("profile") else {}
         request = SubagentLaunchRequest(
             goal=step.get("prompt", ""),

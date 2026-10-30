@@ -54,12 +54,22 @@ def test_ties_break_by_declaration_order():
 def test_agent_passthrough_fields_are_kept():
     designer = {"name": "t", "nodes": [
         {"id": "t1", "type": "trigger", "trigger_mode": "manual", "after": []},
-        {"id": "a", "type": "agent", "prompt": "p", "model": "m1", "provider": "prov",
+        {"id": "a", "type": "agent", "prompt": "p", "model": "m1",
          "schema": {"type": "object"}, "after": ["t1"]},
     ]}
     step = build_run_plan(designer)["steps"][0]
-    assert step["model"] == "m1" and step["provider"] == "prov"
+    assert step["model"] == "m1"
     assert step["schema"] == {"type": "object"}
+
+
+def test_a_stray_provider_field_is_not_passed_through():
+    # A hand-written or old design may still carry ``provider``. A step names a model only;
+    # the runtime derives the provider from the host catalog.
+    designer = {"name": "t", "nodes": [
+        {"id": "t1", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "a", "type": "agent", "prompt": "p", "provider": "prov", "after": ["t1"]},
+    ]}
+    assert "provider" not in build_run_plan(designer)["steps"][0]
 
 
 def test_cycle_raises():

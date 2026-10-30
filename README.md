@@ -27,7 +27,7 @@ press **Run** or point a schedule at it.
 | Kind | Fields | Run-plan mapping |
 | --- | --- | --- |
 | `trigger` | `trigger_mode` (`manual`/`schedule`), `schedule` cron | Not a step: recorded in `plan["meta"]["trigger"]`. Exactly one per design. |
-| `agent` | `prompt` (required), `profile`, `model`, `provider`, `schema`, `inputs`, `timeout`, `retries` | A step that runs an agent. `profile` picks a host bot; its model/provider apply unless the node overrides them. `retries` (0–3, default 0) re-runs the step when the bot fails, and `attempts` in the run state records how many tries it took. Without a subagent backend it pauses as `awaiting_agent` with `pending.prompt`. |
+| `agent` | `prompt` (required), `profile`, `model`, `schema`, `inputs`, `timeout`, `retries` | A step that runs an agent. `profile` picks a host bot; its model applies unless the node overrides it. `model` is chosen from the host catalog — there is no `provider` field, the runtime derives it from the model. `retries` (0–3, default 0) re-runs the step when the bot fails, and `attempts` in the run state records how many tries it took. Without a subagent backend it pauses as `awaiting_agent` with `pending.prompt`. |
 | `condition` | `expression` (required) — `out.<node>.<field> <op> <value>` | Evaluated locally against upstream outputs; a false gate skips its downstream subtree (reported in `skipped`). |
 | `approval` | `question` (required), `options`, `context`, `timeout_minutes`, `on_timeout` | Pauses the run as `awaiting_approval` until `workflow_design_respond` answers it. `timeout_minutes` (1–4320) is a deadline: once it passes the run fails with `approval timed out`, and a late answer gets that verdict instead of resuming. `on_timeout` is `reject` (default) or `escalate` (recorded as `detail: "escalation requested"`; real re-routing is Phase 2). |
 | `output` | `deliver` (`notification`/`channel`), `target` | Collects its parents' outputs under `outputs`, then optionally sends that text through the host send seam. `notification` targets a platform's home channel (`telegram`); `channel` needs `<platform>:<chat id>` (`slack:#ops`). A failed send is recorded in `deliveries`, never fails the run. |
@@ -163,8 +163,8 @@ The agent-facing tools mirror the verbs:
 
 ## Limits worth knowing
 
-* **One bot, model and provider per step.** The agent picker lists host profiles and overrides
-  the model/provider for that step only. It does not re-home skills, tools or memory: a step runs
+* **One bot and one model per step.** The agent picker lists host profiles and overrides
+  the model for that step only. It does not re-home skills, tools or memory: a step runs
   as the active bot with those two overrides, and picking "the writer bot" does not give the step
   the writer's skill set.
 * **Sequential, and no loops.** Steps run one at a time in dependency order. Parallel branches

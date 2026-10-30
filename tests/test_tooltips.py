@@ -37,7 +37,6 @@ OPTION_KEYS = (
     "agent.prompt",
     "agent.profile",
     "agent.model",
-    "agent.provider",
     "agent.retries",
     "condition.expression",
     "approval.question",

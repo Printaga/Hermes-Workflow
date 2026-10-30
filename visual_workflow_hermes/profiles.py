@@ -1,4 +1,4 @@
-"""Host profiles ("bots") for the agent-node picker, and the model/provider they imply.
+"""Host profiles ("bots") for the agent-node picker, and the model one implies.
 
 The host owns profiles: ``hermes_cli.profiles.list_profiles`` is the same call behind
 ``GET /api/profiles``. This module is the plugin's thin, failure-tolerant view of it — the
@@ -6,8 +6,12 @@ dashboard router and the tools must import where the host package is absent (uni
 plain tooling), so nothing is imported at module scope and every failure degrades to "no
 profiles" rather than an exception.
 
-Limitation (deliberate, v1): choosing a profile selects the *model and provider* an agent
-step runs on. A subagent still executes inside the host profile that is serving the request —
+A step names *one* model, never a provider: the provider is derived from the model through the
+host catalog (``models.provider_for_model``), so the canvas has a single select and cannot
+produce a model/provider pair the host would reject.
+
+Limitation (deliberate, v1): choosing a profile selects the *model* an agent step runs on. A
+subagent still executes inside the host profile that is serving the request —
 ``SubagentLaunchRequest`` has no profile/home field — so a workflow cannot re-home a step to
 another profile's skills, SOUL or channels.
 """
@@ -17,7 +21,7 @@ from typing import Optional
 
 
 def list_host_profiles() -> list[dict]:
-    """``[{name, label, model, provider, is_default, description}]``; empty when unavailable."""
+    """``[{name, label, model, is_default, description}]``; empty when unavailable."""
     try:
         from hermes_cli.profiles import list_profiles
 
@@ -40,7 +44,6 @@ def list_host_profiles() -> list[dict]:
                 "name": name,
                 "label": label,
                 "model": str(getattr(info, "model", "") or ""),
-                "provider": str(getattr(info, "provider", "") or ""),
                 "is_default": bool(getattr(info, "is_default", False)),
                 "description": str(getattr(info, "description", "") or ""),
             }
@@ -59,18 +62,15 @@ def profile_choice(name: str, profiles: Optional[list[dict]] = None) -> Optional
     return None
 
 
-def step_model_provider(step: dict, profiles: Optional[list[dict]] = None) -> tuple:
-    """``(model, provider)`` for an agent step: explicit node fields win over the profile.
+def step_model(step: dict, profiles: Optional[list[dict]] = None) -> Optional[str]:
+    """Model for an agent step: the node's own field wins over its profile's model.
 
-    Returns ``(None, None)`` when the node names no profile and no model/provider, which
-    leaves the host's own default in place.
+    Returns None when neither names one, which leaves the host's own default in place.
     """
-    model = step.get("model") or None
-    provider = step.get("provider") or None
-    if model and provider:
-        return model, provider
+    model = (step.get("model") or "").strip() or None
+    if model:
+        return model
     chosen = profile_choice(step.get("profile", ""), profiles)
     if chosen:
-        model = model or (chosen.get("model") or None)
-        provider = provider or (chosen.get("provider") or None)
-    return model, provider
+        return (chosen.get("model") or "").strip() or None
+    return None

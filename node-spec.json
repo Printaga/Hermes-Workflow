@@ -38,13 +38,8 @@
         },
         {
           "name": "model",
-          "type": "text",
+          "type": "model",
           "tip": "agent.model"
-        },
-        {
-          "name": "provider",
-          "type": "text",
-          "tip": "agent.provider"
         },
         {
           "name": "retries",
