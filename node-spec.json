@@ -75,6 +75,11 @@
           "tip": "approval.question"
         },
         {
+          "name": "context",
+          "type": "text",
+          "tip": "approval.context"
+        },
+        {
           "name": "options",
           "type": "list",
           "tip": "approval.options"

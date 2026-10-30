@@ -56,6 +56,7 @@ const TIPS = {
     "agent.retries": "How many extra tries the step gets when the bot fails before the run gives up (0 to 3).",
   "condition.expression": "A test like out.draft.word_count > 20 \u2014 start with out.<node>.<field>, then one of > >= < <= == !=.",
   "approval.question": "The question the person sees; the run waits here until they answer.",
+  "approval.context": "The material the person is deciding on, shown with the question when the run pauses.",
   "approval.options": "Answers offered as buttons, comma separated (e.g. ship, edit); empty means free text.",
   "approval.timeout": "How long to wait for a person before the gate expires, in minutes; empty waits forever.",
   "approval.on_timeout": "What an expired gate does: reject fails the run, escalate flags it for a person.",
@@ -1268,6 +1269,11 @@ function createDesigner(host, call) {
         current.question = v;
         draw();
       }, 3), TIPS["approval.question"]));
+      box.appendChild(field("context (optional)", textArea(current.context || "", (v) => {
+        if (v.trim()) current.context = v;
+        else delete current.context;
+        draw();
+      }, 3), TIPS["approval.context"]));
       box.appendChild(field("options (comma separated)", textInput(
         (current.options || []).join(", "),
         (v) => {

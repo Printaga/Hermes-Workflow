@@ -40,6 +40,7 @@ OPTION_KEYS = (
     "agent.retries",
     "condition.expression",
     "approval.question",
+    "approval.context",
     "approval.options",
     "approval.timeout",
     "approval.on_timeout",

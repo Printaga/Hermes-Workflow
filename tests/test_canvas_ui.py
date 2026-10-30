@@ -127,11 +127,19 @@ def test_an_agent_node_has_no_provider_field(canvas):
     assert "current.provider" not in source, f"{name} still writes a provider onto the node"
 
 
+# Each surface reaches the backend through its own transport, so name the call instead of the
+# path: a URL that only appears in a comment passes a bare substring check while the picker
+# stays empty.
+MODELS_CALL = {
+    "dashboard": 'fetchJSON(API + "/models")',
+    "desktop": 'call("/models")',
+    "widget": 'window.fetch("/api/plugins/visual-workflow/models"',
+}
+
+
 def test_the_model_picker_is_a_select_over_the_host_catalog(canvas):
     name, source = canvas
-    assert re.search(r"/models\b", source), (
-        f"{name} never asks the backend for the host's models"
-    )
+    assert MODELS_CALL[name] in source, f"{name} never requests the host model catalog"
     body = body_of(source, "modelSelect")
     assert 'createElement("select")' in body, f"{name} model picker is not a select"
     assert 'createElement("optgroup")' in body, f"{name} model picker does not group by provider"
@@ -150,6 +158,16 @@ def test_a_paused_run_shows_the_context_it_was_given(canvas):
     # decide with less information than the backend already sent.
     hits = re.findall(r"\b(?:pending|gate|step)\.context\b", body_of(source, "renderRun"))
     assert len(hits) >= 2, f"{name} drops the context a paused run carries: {hits}"
+
+
+def test_an_approval_can_be_given_the_context_it_shows(canvas):
+    name, source = canvas
+    # Showing a field no canvas can set was the other half of the gap: the same inspector that
+    # displays the context must write it, and clearing the box must remove the key rather than
+    # persist an empty string forever.
+    assert 'field("context (optional)"' in source, f"{name} cannot author approval context"
+    assert "current.context" in source, f"{name} never writes approval context"
+    assert "delete current.context" in source, f"{name} stores a cleared context as empty"
 
 
 @pytest.mark.parametrize("name", ["dashboard", "desktop"])
