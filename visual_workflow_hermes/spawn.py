@@ -20,6 +20,52 @@ from typing import Any, Callable, Optional
 PLUGIN_ID = "visual-workflow"
 
 
+def diagnose_failure(exc: BaseException) -> dict:
+    """A backend exception in the words the Runs view needs.
+
+    ``{"kind": ..., "why": ...}`` when the failure matches a known surface — rate limit,
+    timeout, trust refusal, auth, unknown model, connection — else ``{}`` so the raw message
+    is what the run records (never a wrong reason invented for an unknown error).
+    """
+    # The trust gate is a class, not a phrase: ``PluginLlmTrustError`` subclasses
+    # ``PermissionError``, and the message then names the exact config key to set.
+    if isinstance(exc, PermissionError):
+        return {
+            "kind": "trust refusal",
+            "why": (f"the host refused this step's override — either clear the step's model "
+                    f"field or set plugins.entries.{PLUGIN_ID}.llm.allow_model_override in "
+                    f"the host config"),
+        }
+    text = f"{str(exc)} {type(exc).__name__}".lower()
+    if "does not exist" in text or "not found" in text or "decommissioned" in text:
+        return {"kind": "unknown model",
+                "why": "the provider has no model by that id — fix the step's Model field"}
+    if "rate limit" in text or "429" in text or "too many requests" in text or "quota" in text:
+        return {"kind": "rate limited",
+                "why": "the model provider asked to slow down — wait a minute and rerun"}
+    if "timed out" in text or "timeout" in text or "deadline" in text:
+        return {"kind": "timed out",
+                "why": "the call outlived its budget — rerun, or give the step a longer timeout"}
+    if ("401" in text or "403" in text or "api key" in text
+            or "unauthorized" in text or "authentication" in text):
+        return {"kind": "auth failed",
+                "why": "the provider rejected the credentials — check that provider's key "
+                       "in the host config"}
+    if ("connection" in text or "econnrefused" in text or "getaddrinfo" in text
+            or "resolve" in text or "reset by peer" in text or "temporarily" in text
+            or "unable to reach" in text):
+        return {"kind": "connection problem",
+                "why": "the model provider is unreachable from this machine — a retry often "
+                       "clears it; a repeat means check the host's model setup"}
+    return {}
+
+
+def _explain(exc: BaseException, kind: str, why: str) -> str:
+    """The error string a run records: reason first, original detail kept for debugging."""
+    raw = str(exc).strip() or type(exc).__name__
+    return f"{kind}: {raw} — {why}."
+
+
 def llm_spawn(llm: Any = None, plugin_id: str = PLUGIN_ID) -> Optional[Callable[..., dict]]:
     """A spawn callable backed by ``PluginLlm``, or ``None`` when the host is not importable.
 
@@ -73,6 +119,13 @@ def _make_spawn(llm: Any) -> Callable[..., dict]:
         except StepError:
             raise
         except Exception as exc:  # a backend problem is step data: the runner turns it into a failure
-            return {"error": str(exc)}
+            diagnosed = diagnose_failure(exc)
+            if diagnosed:
+                # ``error_kind`` is the machine-readable signal (the runner's rate-limit
+                # backoff keys off it); ``error_hint`` is the same advice as a field, for
+                # any route that wants the hint without the prose.
+                return {"error": _explain(exc, diagnosed["kind"], diagnosed["why"]),
+                        "error_kind": diagnosed["kind"], "error_hint": diagnosed["why"]}
+            return {"error": str(exc) or type(exc).__name__}
 
     return spawn

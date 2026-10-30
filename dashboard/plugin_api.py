@@ -8,7 +8,9 @@ Agent steps run through the host's plugin LLM facade (``PluginLlm`` — ``visual
 it needs no parent-agent session, which the web server can never have, so a manual **Run** executes
 instead of parking at ``awaiting_agent``. Model overrides are trust-gated by
 ``plugins.entries.visual-workflow.llm.allow_model_override``; when the host is not importable the
-routes fall back to ``spawn=None`` and park at ``awaiting_agent`` as before.
+routes fall back to ``spawn=None`` and park at ``awaiting_agent`` as before. A run parked at an
+agent step — including ones parked by older builds — can be resumed with ``agent_generate`` to
+let the facade produce the parked step now, or with a pasted answer as before.
 """
 from __future__ import annotations
 
@@ -348,7 +350,13 @@ def get_run(run_id: str) -> dict:
 
 @router.post("/runs/{run_id}/respond")
 def respond_run(run_id: str, payload: dict = Body(...)) -> dict:
-    """Resume a paused run: an approval ``answer``, or the output of a pending agent step."""
+    """Resume a paused run: an approval ``answer``, or the output of a pending agent step.
+
+    On a parked agent step the body may carry ``agent_generate: true`` and no answer: the host
+    agent then produces the step's output right here (the same private LLM facade a Run uses)
+    and the run continues through the remaining steps. On failure the run stays parked on the
+    step, so a pasted answer is still possible.
+    """
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="body must be an object")
     node_id = payload.get("node_id") or ""
@@ -363,10 +371,50 @@ def respond_run(run_id: str, payload: dict = Body(...)) -> dict:
             status_code=409,
             detail=f"run {run_id!r} is not waiting on {node_id!r}",
         )
+    spawn = llm_spawn()
     try:
         plan = build_run_plan(_load_design(state["name"]))
-        state = resume_plan(plan, state, answer, spawn=llm_spawn(), on_step=runs.save,
+        if payload.get("agent_generate") and answer is None:
+            made = _agent_step_output(plan, state, node_id, spawn)
+            # A structuring schema gives conditions fields to read; plain text otherwise.
+            answer = made.get("structured") if made.get("structured") is not None \
+                else made.get("output") or ""
+        state = resume_plan(plan, state, answer, spawn=spawn, on_step=runs.save,
                             deliver=deliver_output)
     except (StepError, ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _result(state)
+
+
+def _agent_step_output(plan: dict, state: dict, node_id: str, spawn) -> dict:
+    """Produce one parked agent step's output through the spawn seam.
+
+    The step comes from the freshly built plan (prompt, model, schema, inputs and all), not
+    from the stored ``pending``, so the generated output uses exactly what the design decided.
+    Any failure raises and the run stays parked on the step — never half-resumed.
+    """
+    step = next((s for s in plan["steps"] if s["id"] == node_id), None)
+    if step is None:
+        raise HTTPException(
+            status_code=404, detail=f"paused step {node_id!r} is not in the design")
+    if step.get("kind") != "agent":
+        # Validate the target BEFORE the backend, so a wrong request is 400 even where
+        # no backend exists.
+        raise HTTPException(
+            status_code=400, detail="agent_generate applies only to a paused agent step")
+    if spawn is None:
+        raise HTTPException(
+            status_code=503,
+            detail="no agent backend in this dashboard; paste the step's result instead",
+        )
+    try:
+        made = spawn(step, state.get("outputs") or {}, state)
+    except StepError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not isinstance(made, dict):
+        raise HTTPException(
+            status_code=502, detail="the agent backend returned no output")
+    if made.get("error"):
+        raise HTTPException(
+            status_code=502, detail=f"the agent step failed: {made['error']}")
+    return made

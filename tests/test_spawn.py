@@ -97,6 +97,69 @@ def test_spawn_wraps_a_backend_failure_as_step_data():
     assert out == {"error": "the bot failed"}
 
 
+# ------------------------------------------------------------------ the diagnosed error
+# The Runs view prints a step's error message verbatim, so a bare provider string
+# ("Connection error.") is a dead end. spawn explains the surface it saw — reason first,
+# original detail kept — and invents nothing when the failure matches nothing known.
+
+
+def test_spawn_diagnoses_a_rate_limit():
+    llm = _Llm(raises=RuntimeError("Error code: 429 - Rate limit reached for model"))
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "prompt": "p"}, {})
+    assert out["error"].startswith("rate limited: "), out["error"]
+    assert out["error_kind"] == "rate limited"    # the runner's one-key retry reads this
+    assert "429" in out["error"]          # the original detail survives for debugging
+    assert "wait a minute" in out["error"]
+
+
+def test_spawn_diagnoses_a_timeout():
+    llm = _Llm(raises=TimeoutError("Request timed out"))
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "prompt": "p"}, {})
+    assert out["error"].startswith("timed out: "), out["error"]
+    assert "Request timed out" in out["error"]
+
+
+def test_spawn_diagnoses_a_trust_refusal():
+    llm = _Llm(raises=PermissionError(
+        "Plugin 'visual-workflow' cannot override the model (set "
+        "plugins.entries.visual-workflow.llm.allow_model_override to true to allow)."))
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "prompt": "p"}, {})
+    assert out["error"].startswith("trust refusal: "), out["error"]
+    assert "allow_model_override" in out["error"]
+
+
+def test_spawn_diagnoses_an_auth_failure():
+    llm = _Llm(raises=RuntimeError("Error code: 401 - Invalid API key"))
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "prompt": "p"}, {})
+    assert out["error"].startswith("auth failed: "), out["error"]
+
+
+def test_spawn_diagnoses_an_unknown_model():
+    llm = _Llm(raises=RuntimeError("model 'z-9' does not exist"))
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "prompt": "p"}, {})
+    assert out["error"].startswith("unknown model: "), out["error"]
+    assert "Model field" in out["error"]
+
+
+def test_spawn_diagnoses_a_connection_failure():
+    llm = _Llm(raises=RuntimeError("Connection error."))
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "prompt": "p"}, {})
+    assert out["error"].startswith("connection problem: "), out["error"]
+    assert "Connection error." in out["error"]
+
+
+def test_spawn_invents_nothing_for_an_unknown_failure():
+    llm = _Llm(raises=RuntimeError("something wholly novel happened"))
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "prompt": "p"}, {})
+    assert out == {"error": "something wholly novel happened"}
+
+
+def test_an_empty_message_falls_back_to_the_exception_name():
+    llm = _Llm(raises=RuntimeError())
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "prompt": "p"}, {})
+    assert out["error"] == "RuntimeError"
+
+
 def test_llm_spawn_returns_none_when_the_host_is_absent(monkeypatch):
     class _Boom:
         def __getattr__(self, item):

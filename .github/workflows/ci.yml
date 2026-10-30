@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Full suite (route tests included, never skipped): an ephemeral env with the
+      # fastapi/httpx the dashboard router imports, the same command shape verified locally.
+      - name: Run tests (pytest + fastapi + httpx)
+        run: >
+          uv run --no-project --python 3.12
+          --with pytest --with fastapi --with httpx pytest -q
+
+      # The two host manifest gates, at the pinned hermes-agent build, installed locked.
+      - name: Check out hermes-agent (pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: bf0203a794a07aac3ff764972ab9087baa4e4f4e
+          path: hermes-agent
+      - name: Install hermes-agent deps (frozen)
+        run: uv sync --project hermes-agent --frozen
+      - name: hermes plugins validate .
+        run: uv run --project hermes-agent hermes plugins validate .
+      - name: hermes plugins doctor .
+        run: uv run --project hermes-agent hermes plugins doctor .

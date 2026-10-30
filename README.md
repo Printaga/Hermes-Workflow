@@ -69,17 +69,28 @@ a copy of the plugin with no `examples/` simply shows no templates. Each file ca
 ## Install
 
 ```bash
-# either
 hermes plugins install <repo-url>
-# or link a checkout into the plugin directory
-ln -s /path/to/Hermes-Workflow ~/.hermes/plugins/visual-workflow
+# installs disabled by default — activate it:
+hermes plugins enable visual-workflow   # also resolves the plugin's Python deps
 
 hermes plugins list          # visual-workflow 0.1.0
-hermes plugins validate .    # exit 0
-hermes plugins doctor .      # import + registration OK, 5 tools
+hermes plugins validate .    # from the checkout: "Validation passed."
+hermes plugins doctor .      # import + registration OK, 5 tool(s), 0 hook(s)
 ```
 
-Requires Hermes >= 0.21 and Python >= 3.10. No third-party dependencies.
+A `file://` or `http://` install source prints a "custom (unreviewed) source" warning;
+`https://github.com/<owner>/<repo>.git` does not. To develop on a checkout in place, clone it
+**into** the plugin directory (a symlink is discoverable but cannot be tracked — `hermes plugins
+adopt` refuses paths that resolve outside the plugins directory), then register it:
+
+```bash
+git clone <repo-url> ~/.hermes/plugins/visual-workflow
+hermes plugins adopt visual-workflow    # "✓ Adopted … now a tracked git install"
+```
+
+Requires Hermes >= 0.21 and Python >= 3.10. `pyproject.toml` declares no pip dependencies —
+the dashboard router imports `fastapi`/`httpx` from the Hermes server's own environment, and
+tests that need them skip where they are missing.
 
 ### Desktop tab: it ships opt-in (one toggle)
 
@@ -193,3 +204,7 @@ skips, resume, pruning, retries, timeouts), the cron plan, every shipped templat
 validate and convert), the dashboard router and its live endpoints, all three canvases' layout
 and controls, the widget's embedded graph and its dependency-free guarantees, and every
 slash-command verb.
+
+Every push runs the full suite under CI (`.github/workflows/ci.yml`) with fastapi/httpx
+provisioned, so the dashboard route tests always execute — plus the two host manifest gates,
+`hermes plugins validate .` and `hermes plugins doctor .`.

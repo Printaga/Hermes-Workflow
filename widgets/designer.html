@@ -202,6 +202,7 @@
     "output.send_to": "One choice: collect only, a home channel for a notification, or one specific chat.",
     "output.target": "Where it goes: a platform for its home channel, or platform:chat id like telegram:8522302999.",
     "runs.resume": "Paste the agent step's result here and resume the run right where it paused.",
+    "runs.agent": "Let the host agent produce this step's output now, then resume right where it paused.",
     "note.text": "What the sticky says; it is only for the person reading the canvas.",
     "note.color": "Tint for the sticky; it is a reading aid, not part of the run.",
     "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
@@ -1458,12 +1459,18 @@
     }
     if (status === "awaiting_agent") {
       var step = result.pending || {};
+      // A parked agent step means no agent backend was around when the run needed it (an
+      // older parked run, or the backend was briefly unavailable). Resume either way: let
+      // the agent produce the step now, or paste the result yourself.
       banner("Run " + runId + " paused at agent step " + step.node_id +
-        " — paste its result below to resume, or run the workflow from chat.", "warn");
+        " — run this step with the agent, or paste its result below (or run the workflow from chat).", "warn");
       box.appendChild(runLine("h4", "agent step " + step.node_id + " is waiting"));
       if (step.prompt) { box.appendChild(runLine("pre", step.prompt)); }
       if (step.context) { box.appendChild(runLine("pre", step.context)); }
-      box.appendChild(runLine("p", "Paste the step's result here and press resume — no chat needed.", "hint"));
+      var agentRun = runButton("Run this step with the agent", function () { respondByAgent(step.node_id); });
+      agentRun.title = TIPS["runs.agent"];
+      box.appendChild(agentRun);
+      box.appendChild(runLine("p", "Or paste the step's result here and press resume — no chat needed.", "hint"));
       var area = document.createElement("textarea");
       area.rows = 3;
       area.placeholder = "paste the step's output (a JSON object is passed as structured)";
@@ -1494,6 +1501,41 @@
     if (result.error) {
       box.appendChild(runLine("pre", typeof result.error === "string" ? result.error : JSON.stringify(result.error)));
     }
+  }
+
+  /** Let the host agent produce the parked step's output (the facade a Run uses), then keep
+   *  going; when the backend is absent the route answers 503 and the banner says so. */
+  function respondByAgent(nodeId) {
+    if (!lastRunId) {
+      banner("There is no paused run to answer.", "error");
+      return;
+    }
+    if (!window.fetch) {
+      banner("Cannot resume — this page has no way to reach the backend.", "error");
+      return;
+    }
+    note("asking the agent…");
+    banner("Asking the agent to run step " + nodeId + " of run " + lastRunId + "…", "");
+    window.fetch(API + "/runs/" + encodeURIComponent(lastRunId) + "/respond", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ run_id: lastRunId, node_id: nodeId, agent_generate: true }),
+    }).then(function (res) {
+      return res.json().then(function (data) { return { ok: res.ok, body: data }; });
+    }).then(function (out) {
+      if (!out.ok) {
+        var detail = (out.body && out.body.detail) || "the request failed";
+        banner("Could not resume — " + detail, "error");
+        note("");
+        return;
+      }
+      renderRun(out.body || {});
+    }).catch(function (err) {
+      var detail = err && err.message ? err.message : String(err);
+      banner("Could not resume — " + detail, "error");
+      note("");
+    });
   }
 
   /** Feed a paused step's answer back in; the run panel stays mounted so it can continue. */

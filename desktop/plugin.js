@@ -86,6 +86,7 @@ const TIPS = {
   "schedule.status": "Whether Hermes really has a cron job for this workflow, and when it next fires.",
   "runs.approve": "Answer this gate now; the run resumes from where it stopped.",
   "runs.resume": "Paste the agent step's result here and resume the run right where it paused.",
+  "runs.agent": "Let the host agent produce this step's output now, then resume right where it paused.",
   "runs.open": "Open the saved workflow this run belongs to.",
   "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
@@ -2056,6 +2057,27 @@ function createDesigner(host, call) {
     });
   }
 
+  function respondByAgent(nodeId) {
+    // Let the host agent produce the parked step's output (the facade a Run uses), then
+    // keep going; when the backend is absent the route answers 503 and says so.
+    if (!lastRun || !lastRun.run_id) {
+      note("no active run");
+      return;
+    }
+    note("asking the agent\u2026");
+    call("/runs/" + encodeURIComponent(lastRun.run_id) + "/respond", {
+      method: "POST",
+      body: { run_id: lastRun.run_id, node_id: nodeId, agent_generate: true },
+    }).then((data) => {
+      showErrors([]);
+      renderRun(data);
+    }).catch((err) => {
+      note("");
+      el.run.textContent = explain(err);
+      banner("Could not resume the run \u2014 " + explain(err), "error");
+    });
+  }
+
   // --------------------------------------------------------------- run box
   function line(tag, text, cls) {
     const node = document.createElement(tag);
@@ -2136,18 +2158,24 @@ function createDesigner(host, call) {
 
     if (status === "awaiting_agent") {
       const step = result.pending || {};
-      // The desktop canvas has no subagent backend either, so an agent step parks here. Say
-      // so plainly: a run that quietly waits looks exactly like a run that did nothing.
+      // A parked agent step means no agent backend was around when the run needed it (an
+      // older parked run, or the backend was briefly unavailable). Resume either way: let
+      // the agent produce the step now, or paste the result yourself.
       banner(
         "Run " + (result.run_id || "") + " paused at agent step " + step.node_id +
-        " \u2014 this canvas cannot run an agent, so paste its result below (or run the " +
+        " \u2014 run this step with the agent, or paste its result below (or run the " +
         "workflow from chat, where the agent executes).",
         "warn"
       );
       box.appendChild(line("h4", "agent step " + step.node_id + " is waiting"));
       box.appendChild(line("pre", step.prompt || ""));
       if (step.context) box.appendChild(line("pre", step.context));
-      box.appendChild(line("p", "Paste the step's result here and press resume \u2014 no chat needed.", "vw-hint"));
+      const agentRun = button("Run this step with the agent", () => {
+        respondByAgent(step.node_id);
+      });
+      agentRun.title = TIPS["runs.agent"];
+      box.appendChild(agentRun);
+      box.appendChild(line("p", "Or paste the step's result here and press resume \u2014 no chat needed.", "vw-hint"));
       const area = document.createElement("textarea");
       area.rows = 3;
       area.placeholder = "paste the step's output (a JSON object is passed as structured)";

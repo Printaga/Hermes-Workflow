@@ -20,6 +20,10 @@ MAX_CONTEXT_CHARS = 4000
 # A transient agent failure may be retried; three extra attempts is the ceiling (schema rejects
 # more), because a step that fails four times is a design defect, not bad luck.
 MAX_RETRIES = 3
+# A diagnosed rate limit gets ONE automatic retry even on a step with no retry budget — a
+# delay genuinely fixes it, which no other failure kind can claim. Short by design: the
+# provider asking to slow down is usually momentum, not a long outage.
+RATE_LIMIT_BACKOFF_SECONDS = 15.0
 _TRUNCATED = "\n[\u2026 truncated {n} chars \u2026]"
 
 
@@ -142,21 +146,43 @@ def _spawn_with_retries(spawn, step: dict, state: dict) -> dict:
     question), and a condition expression is deterministic — retrying either would hide the
     defect instead of surviving a flaky model call. ``state["attempts"]`` records how many
     tries the node took, so a run result can explain itself.
+
+    One exception to the budget: a failure the spawn seam diagnosed as "rate limited" gets
+    a single automatic retry after a short backoff (``RATE_LIMIT_BACKOFF_SECONDS``), because
+    a delay is the one thing that actually clears it — and that delay applies inside the
+    budget too, since an instant retry after a 429 just re-hits the cap. Exactly once beyond
+    the budget — a second rate limit there is a real constraint, not momentum, and the run
+    must say so instead of napping forever.
     """
     try:
         budget = max(0, min(MAX_RETRIES, int(step.get("retries") or 0)))
     except (TypeError, ValueError):  # a hand-written JSON is data, not a crash
         budget = 0
     attempts = 0
+    rate_retried = False
     while True:
         attempts += 1
         state.setdefault("attempts", {})[step["id"]] = attempts
         try:
             produced = spawn(step, state["outputs"], state) or {}
             if produced.get("error"):
-                raise StepError(str(produced["error"]))
+                err = StepError(str(produced["error"]))
+                # The diagnosis travels with the failure signal: the retry policy below keys
+                # off the kind, not off the prose.
+                err.kind = produced.get("error_kind")
+                raise err
             return produced
-        except StepError:
+        except StepError as exc:
+            rate_limited = getattr(exc, "kind", None) == "rate limited"
+            if rate_limited and attempts <= budget:
+                # Inside the budget: same policy, the provider asked to slow down, so an
+                # immediate retry would just re-hit the cap. Nap first, then burn the wait.
+                time.sleep(RATE_LIMIT_BACKOFF_SECONDS)
+                continue
+            if rate_limited and not rate_retried:
+                rate_retried = True  # the one attempt beyond the budget, same short wait
+                time.sleep(RATE_LIMIT_BACKOFF_SECONDS)
+                continue
             if attempts > budget:
                 raise
 

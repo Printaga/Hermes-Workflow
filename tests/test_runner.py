@@ -1,5 +1,6 @@
 import pytest
 
+import visual_workflow_hermes.runner as runner
 from visual_workflow_hermes.runner import (StepError, evaluate_condition, new_state,
                                            resume_plan, run_plan)
 
@@ -50,6 +51,75 @@ def test_without_retries_the_first_failure_fails_the_run_as_before():
     assert state["status"] == "failed"
     assert state["error"] == {"node_id": "a", "msg": "transient"}
     assert calls["n"] == 1
+
+
+# -- one automatic backed-off retry for a diagnosed rate limit ---------------
+# A delay is the one thing that actually clears a rate limit, so even a step with no retry
+# budget gets a single automatic retry after a short backoff. Exactly once: a second rate
+# limit is a real constraint and the run must say so instead of napping forever.
+
+
+def test_a_rate_limited_step_gets_one_automatic_backed_off_retry(monkeypatch):
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    outcomes = [
+        {"error": "rate limited: 429 - Rate limit reached — wait a minute and rerun.",
+         "error_kind": "rate limited"},
+        {"output": "after the pause"},
+    ]
+    naps = []
+    monkeypatch.setattr(runner.time, "sleep", lambda s: naps.append(s))
+    state = run_plan(plan, new_state(plan, "rl1"), spawn=lambda s, o, st: outcomes.pop(0))
+    assert state["status"] == "done"
+    assert state["outputs"]["a"] == "after the pause"
+    assert state["attempts"] == {"a": 2}
+    assert naps == [runner.RATE_LIMIT_BACKOFF_SECONDS]
+
+
+def test_a_second_rate_limited_failure_still_fails_the_run(monkeypatch):
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    naps = []
+    monkeypatch.setattr(runner.time, "sleep", lambda s: naps.append(s))
+    state = run_plan(
+        plan, new_state(plan, "rl2"),
+        spawn=lambda s, o, st: {"error": "rate limited: 429 — wait.",
+                                "error_kind": "rate limited"})
+    assert state["status"] == "failed"
+    assert state["error"] == {"node_id": "a",
+                              "msg": "rate limited: 429 — wait."}
+    assert state["attempts"] == {"a": 2}, "the automatic retry is used up, not extended"
+    assert naps == [runner.RATE_LIMIT_BACKOFF_SECONDS], "napped once, not forever"
+
+
+def test_other_kinds_get_no_nap_and_no_extra_attempt(monkeypatch):
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    naps = []
+    monkeypatch.setattr(runner.time, "sleep", lambda s: naps.append(s))
+    state = run_plan(
+        plan, new_state(plan, "rl3"),
+        spawn=lambda s, o, st: {"error": "auth failed: 401 — Invalid API key",
+                                "error_kind": "auth failed"})
+    assert state["status"] == "failed"
+    assert state["attempts"] == {"a": 1}
+    assert naps == [], "an auth problem is not fixed by waiting"
+
+
+def test_a_rate_limited_retry_inside_the_budget_backs_off_first(monkeypatch):
+    """A step that budgeted retries still naps before one: an instant retry after a 429
+    just re-hits the cap, so the backoff applies to every rate-limited retry, not only the
+    automatic one beyond the budget."""
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p", "retries": 1})
+    outcomes = [
+        {"error": "rate limited: 429 — wait.", "error_kind": "rate limited"},
+        {"error": "rate limited: 429 — wait.", "error_kind": "rate limited"},
+        {"output": "got through"},
+    ]
+    naps = []
+    monkeypatch.setattr(runner.time, "sleep", lambda s: naps.append(s))
+    state = run_plan(plan, new_state(plan, "rl4"), spawn=lambda s, o, st: outcomes.pop(0))
+    assert state["status"] == "done"
+    assert state["outputs"]["a"] == "got through"
+    assert state["attempts"] == {"a": 3}, "budget retry + automatic retry, nothing more"
+    assert naps == [runner.RATE_LIMIT_BACKOFF_SECONDS] * 2
 
 
 def test_an_exhausted_retry_budget_reports_the_last_error():

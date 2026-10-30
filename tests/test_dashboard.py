@@ -237,7 +237,6 @@ def test_profiles_endpoint_lists_the_hosts_profiles(tmp_path, monkeypatch):
     class Info:
         name = "writer"
         model = "claude"
-        provider = "anthropic"
         is_default = False
         bot_title = "Writer bot"
         display_name = ""
@@ -250,9 +249,11 @@ def test_profiles_endpoint_lists_the_hosts_profiles(tmp_path, monkeypatch):
 
     body = client.get("/api/plugins/visual-workflow/profiles").json()
     assert body["available"] is True
+    # A step names one model, never a provider: the listing carries no ``provider`` key
+    # (see ``visual_workflow_hermes/profiles.py`` and the README's model-picker note).
     assert body["profiles"] == [{
         "name": "writer", "label": "Writer bot", "model": "claude",
-        "provider": "anthropic", "is_default": False, "description": "drafts",
+        "is_default": False, "description": "drafts",
     }]
 
 
@@ -466,6 +467,100 @@ def test_respond_route_runs_the_remaining_agent_step_with_a_host_llm(tmp_path, m
     ).json()
     assert done["status"] == "done", done
     assert done["outputs"]["two"] == "done by the llm"
+
+
+def test_respond_route_can_generate_the_parked_agent_step_with_the_host_llm(tmp_path, monkeypatch):
+    """``agent_generate`` on a parked agent step lets the host agent produce the output now.
+
+    This is the hand-paste escape hatch for runs parked by older builds (before the LLM
+    facade existed): the same private facade a Run uses fills the parked step in, and the
+    run continues through the remaining agent steps.
+    """
+    from visual_workflow_hermes.spawn import _make_spawn
+
+    client, mod = _client(tmp_path, monkeypatch)
+    graph = {
+        "name": "later-generate",
+        "nodes": [
+            {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+            {"id": "one", "type": "agent", "prompt": "first", "after": ["t"]},
+            {"id": "two", "type": "agent", "prompt": "second", "after": ["one"]},
+        ],
+    }
+    assert client.post("/api/plugins/visual-workflow/designs/later-generate",
+                       json={"graph": graph}).json()["ok"] is True
+
+    # Park the run the old way: no agent backend at run time (like an older parked run).
+    monkeypatch.setattr(mod, "llm_spawn", lambda: None)
+    parked = client.post("/api/plugins/visual-workflow/designs/later-generate/run").json()
+    assert parked["status"] == "awaiting_agent"
+
+    # Resume via generation instead of a pasted answer.
+    monkeypatch.setattr(mod, "llm_spawn",
+                        lambda: _make_spawn(_FakeCompleteLlm(text="generated now")))
+    done = client.post(
+        f"/api/plugins/visual-workflow/runs/{parked['run_id']}/respond",
+        json={"run_id": parked["run_id"], "node_id": "one", "agent_generate": True},
+    ).json()
+    assert done["status"] == "done", done
+    assert done["outputs"]["one"] == "generated now"
+    # The remaining agent step ran through the same backend too.
+    assert done["outputs"]["two"] == "generated now"
+    assert done["pending"] is None
+
+
+def test_agent_generate_without_a_backend_leaves_the_run_resumable(tmp_path, monkeypatch):
+    """A 503 on ``agent_generate`` never half-resumes: the run stays parked and a pasted
+    answer still works afterwards."""
+    from visual_workflow_hermes.spawn import _make_spawn
+
+    client, mod = _client(tmp_path, monkeypatch)
+    graph = {
+        "name": "still-parked",
+        "nodes": [
+            {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+            {"id": "one", "type": "agent", "prompt": "first", "after": ["t"]},
+        ],
+    }
+    assert client.post("/api/plugins/visual-workflow/designs/still-parked",
+                       json={"graph": graph}).json()["ok"] is True
+    monkeypatch.setattr(mod, "llm_spawn", lambda: None)
+    parked = client.post("/api/plugins/visual-workflow/designs/still-parked/run").json()
+    assert parked["status"] == "awaiting_agent"
+
+    refused = client.post(
+        f"/api/plugins/visual-workflow/runs/{parked['run_id']}/respond",
+        json={"run_id": parked["run_id"], "node_id": "one", "agent_generate": True},
+    )
+    assert refused.status_code == 503
+    assert "paste the step's result" in refused.json()["detail"]
+
+    # ...and nothing was consumed: the run still waits on step one.
+    detail = client.get(f"/api/plugins/visual-workflow/runs/{parked['run_id']}").json()
+    assert detail["status"] == "awaiting_agent" and detail["pending"]["node_id"] == "one"
+    monkeypatch.setattr(mod, "llm_spawn",
+                        lambda: _make_spawn(_FakeCompleteLlm(text="backend text")))
+    done = client.post(
+        f"/api/plugins/visual-workflow/runs/{parked['run_id']}/respond",
+        json={"run_id": parked["run_id"], "node_id": "one", "answer": "pasted instead"},
+    ).json()
+    assert done["status"] == "done" and done["outputs"]["one"] == "pasted instead"
+
+
+def test_agent_generate_on_an_approval_gate_is_refused_not_consumed(tmp_path, monkeypatch):
+    """Generation is for agent steps only: a gate is refused and the gate stays open."""
+    client, _ = _client(tmp_path, monkeypatch)
+    _save_gate_design(client)
+    started = client.post("/api/plugins/visual-workflow/designs/gated/run").json()
+    assert started["status"] == "awaiting_approval"
+
+    refused = client.post(
+        f"/api/plugins/visual-workflow/runs/{started['run_id']}/respond",
+        json={"run_id": started["run_id"], "node_id": "gate", "agent_generate": True},
+    )
+    assert refused.status_code == 400
+    detail = client.get(f"/api/plugins/visual-workflow/runs/{started['run_id']}").json()
+    assert detail["status"] == "awaiting_approval" and detail["pending"]["node_id"] == "gate"
 
 
 class _FakeCompleteLlm:

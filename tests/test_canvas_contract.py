@@ -316,8 +316,10 @@ def test_the_old_two_dropdown_combo_keeps_the_exact_field_error(client):
     assert validated["ok"] is False and validated["errors"] == expected
 
     ran = _run(api, "legacy-combo")
-    assert ran["ok"] is False and ran["status"] == "invalid"
-    assert ran["errors"] == expected
+    # The route runs saved designs only, and this invalid graph was never saved — so the
+    # run leg is a 404, not the field report; the exact error is carried by save+validate
+    # above, which are what the canvas shows before a run exists.
+    assert ran == {"detail": "no saved workflow named 'legacy-combo'"}
 
 
 # ------------------------------------------------------------------- the resume dead-end
@@ -333,6 +335,21 @@ def test_the_run_panel_resumes_an_agent_step_inline(canvas):
     )
     assert "from chat" in body or "from chat" in source, f"{name} drops the run-via-chat hint"
     assert "runs.resume" in source, f"{name} does not explain the resume control"
+
+
+def test_the_run_panel_can_let_the_agent_produce_the_parked_step(canvas):
+    """A parked agent step must not force hand-pasting: the canvas offers the host agent's
+    own execution (``agent_generate`` — the facade a Run uses), and never claims the canvas
+    categorically cannot run an agent."""
+    name, source = canvas
+    body = function_body(source, "renderRun")
+    assert "Run this step with the agent" in body, f"{name} buttons the generation off"
+    # The payload the control builds lives in the canvas's own respond helper; either way it
+    # must reach the resume route, never a hand-pasted fallback.
+    assert "agent_generate" in source, f"{name} has no run-with-agent control on the pause card"
+    assert "cannot run an agent" not in body and "cannot run an agent" not in source, (
+        f"{name} still claims it cannot run an agent at all"
+    )
 
 
 def test_a_run_started_elsewhere_can_be_reopened_into_the_resume_box(canvas):
