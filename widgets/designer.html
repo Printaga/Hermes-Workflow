@@ -92,6 +92,13 @@
   .muted { color: var(--muted-foreground, #9a9a9a); }
   .label { color: var(--muted-foreground, #9a9a9a); font-size: 11px; margin: 8px 0 2px; }
   .hint { color: var(--muted-foreground, #9a9a9a); font-size: 11px; margin: 2px 0 0; }
+  /* The diagnosed-failure chip next to a failed run's error text; the hint rides the title. */
+  .chip {
+    display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 9px;
+    font-size: 11px; line-height: 18px;
+    border: 1px solid var(--border, #3a3a3a); background: var(--card, #1e1e1e);
+    color: var(--muted-foreground, #9a9a9a);
+  }
   #canvas { display: block; }
   #canvas .node { cursor: grab; }
   #canvas .node:active { cursor: grabbing; }
@@ -203,6 +210,7 @@
     "output.target": "Where it goes: a platform for its home channel, or platform:chat id like telegram:8522302999.",
     "runs.resume": "Paste the agent step's result here and resume the run right where it paused.",
     "runs.agent": "Let the host agent produce this step's output now, then resume right where it paused.",
+    "runs.retry": "Re-run this failed run from the step that failed; steps that already finished are kept.",
     "note.text": "What the sticky says; it is only for the person reading the canvas.",
     "note.color": "Tint for the sticky; it is a reading aid, not part of the run.",
     "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
@@ -376,6 +384,7 @@
   var models = [];      // host model catalog: [{slug, label, models}]
   var channels = [];    // host channel directory: [{id, label, kind, platform}]
   var lastRunId = "";   // the run the resume box answers
+  var lastStatus = "";  // that run's last seen status: only a failed one is retryable
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
   function node(id) { return graph.nodes.filter(function (n) { return n.id === id; })[0] || null; }
@@ -1423,6 +1432,7 @@
     var status = result.status;
     var runId = result.run_id || "";
     lastRunId = runId;
+    lastStatus = String(status || "");
     var box = document.getElementById("run");
     box.textContent = "";
     box.hidden = false;
@@ -1487,6 +1497,18 @@
       banner("Run " + runId + " failed — " + (error.node_id ? error.node_id + ": " : "") + (error.msg || ""), "error");
       box.appendChild(runLine("h4", "run failed"));
       box.appendChild(runLine("pre", (error.node_id ? error.node_id + ": " : "") + (error.msg || "")));
+      // A diagnosed failure gets a labelled chip; the hint is the chip's tooltip and the
+      // raw message above stays the evidence. No diagnosis, no chip — as before.
+      if (error.kind) {
+        var chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = error.kind;
+        chip.title = error.hint || "diagnosed failure kind";
+        box.appendChild(chip);
+      }
+      var retryRun = runButton("Retry run", function () { retryFailedRun(); });
+      retryRun.title = TIPS["runs.retry"];
+      box.appendChild(retryRun);
       return;
     }
     if (status === "done") {
@@ -1534,6 +1556,42 @@
     }).catch(function (err) {
       var detail = err && err.message ? err.message : String(err);
       banner("Could not resume — " + detail, "error");
+      note("");
+    });
+  }
+
+  /** Re-run a failed run from the step it failed on: the runner re-enters there and keeps
+   *  everything that already produced output. Only a failed run is retried — a parked gate
+   *  is answered, not restarted. Absent backend → the banner says the request failed. */
+  function retryFailedRun() {
+    if (!lastRunId || lastStatus !== "failed") {
+      banner("There is no failed run to retry.", "error");
+      return;
+    }
+    if (!window.fetch) {
+      banner("Cannot retry — this page has no way to reach the backend.", "error");
+      return;
+    }
+    note("retrying…");
+    banner("Retrying run " + lastRunId + " from the failed step…", "");
+    window.fetch(API + "/runs/" + encodeURIComponent(lastRunId) + "/retry", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).then(function (res) {
+      return res.json().then(function (data) { return { ok: res.ok, body: data }; });
+    }).then(function (out) {
+      if (!out.ok) {
+        var detail = (out.body && out.body.detail) || "the request failed";
+        banner("Could not retry — " + detail, "error");
+        note("");
+        return;
+      }
+      renderRun(out.body || {});
+    }).catch(function (err) {
+      var detail = err && err.message ? err.message : String(err);
+      banner("Could not retry — " + detail, "error");
       note("");
     });
   }

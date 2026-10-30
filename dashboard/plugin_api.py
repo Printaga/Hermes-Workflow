@@ -38,6 +38,8 @@ from visual_workflow_hermes.runner import (  # noqa: E402
     check_timeouts,
     new_state,
     resume_plan,
+    retry_failed,
+    retryable,
     run_plan,
 )
 from visual_workflow_hermes.schedule import (  # noqa: E402
@@ -381,6 +383,31 @@ def respond_run(run_id: str, payload: dict = Body(...)) -> dict:
                 else made.get("output") or ""
         state = resume_plan(plan, state, answer, spawn=spawn, on_step=runs.save,
                             deliver=deliver_output)
+    except (StepError, ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _result(state)
+
+
+@router.post("/runs/{run_id}/retry")
+def retry_run(run_id: str) -> dict:
+    """Re-run a failed run from the step it failed on.
+
+    The reset is runner-owned (``retry_failed``): everything that already produced output is
+    reused, so a retry that succeeds repeats only the failed step and its downstream — the
+    same work ``/workflow run retry <run_id>`` does.
+    """
+    runs = _runs()
+    state = _load_run(run_id)
+    if not retryable(state):
+        raise HTTPException(
+            status_code=409,
+            detail=(f"run {run_id!r} is {str(state.get('status'))!r}, not failed "
+                    "— nothing to retry"),
+        )
+    try:
+        plan = build_run_plan(_load_design(state["name"]))
+        state = retry_failed(plan, state, spawn=llm_spawn(), on_step=runs.save,
+                             deliver=deliver_output)
     except (StepError, ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _result(state)

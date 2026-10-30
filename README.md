@@ -35,6 +35,21 @@ press **Run** or point a schedule at it.
 Edges are `after: [<node-id>...]`: a node runs once all of its parents have run. Layout `x`/`y`
 is widget-only and never reaches the run plan.
 
+### When a run fails
+
+A failed run's record is `{node_id, msg, kind?, hint?}`: when the backend failure matches a
+known surface — rate limit, timeout, trust refusal, auth, unknown model, connection — the
+spawn seam attaches a `kind` label and one-sentence `hint`, and both persist on disk with
+the verdict; an undiagnosed failure simply has neither key. The three canvases render the
+kind as a chip beside the error text (hint on the tooltip) and offer a **Retry** control —
+and `POST /runs/<run_id>/retry` and `/workflow run retry <run_id>` do the same elsewhere. A
+retry re-enters the run at the failed step (the runner owns the reset), reusing everything
+that already produced output; anything else — a parked gate, a run in flight, a finished
+one — is refused. One exception: a retry reset is stamped before any work, so if the host
+crashes mid-retry the run sits `running` with no verdict, and a retry it could never see
+finish (10 minutes cold) is taken over by the next one instead of wedging forever. A diagnosed rate limit additionally gets one automatic
+backed-off retry at run time, before a failure ever exists to retry.
+
 ### Sticky notes
 
 A **note** (`{"id", "type": "note", "text", "x", "y", "color"}`) is a label for whoever reads
@@ -131,6 +146,7 @@ JSON.parse(localStorage.getItem('hermes.desktop.pluginDecisions.v2') || '{}')['v
 /workflow validate demo                 # problems, or "demo: valid"
 /workflow save demo {"name":"demo",...} # validate, then write the design
 /workflow run demo                      # run it now
+/workflow run retry <run_id>            # re-run a failed run from the step that failed
 /workflow approve <run_id> <gate> <answer>   # answer a paused approval gate
 ```
 
@@ -156,7 +172,7 @@ The agent-facing tools mirror the verbs:
 | `workflow_design_save` | Validate and store a design. |
 | `workflow_design_load` | Load a stored design. |
 | `workflow_design_validate` | Validate without saving; returns `{node, field, msg}` defects. |
-| `workflow_design_run` | Run a design: `done`, `awaiting_approval`, `awaiting_agent`, or `failed`. |
+| `workflow_design_run` | Run a design: `done`, `awaiting_approval`, `awaiting_agent`, or `failed`. With `retry: <run_id>` instead of `name`, it re-runs a failed run from the step that failed. |
 | `workflow_design_respond` | Resume a paused run with an approval answer or an agent output. |
 
 ## Triggers
@@ -183,7 +199,8 @@ The agent-facing tools mirror the verbs:
   supervisor yet. Branch with a condition instead — a false gate skips its downstream subtree.
 * **Run history is files, not a database.** The **Runs** view lists `~/.hermes/workflow-runs/*.json`
   newest-first (including runs started from chat or cron), and reading a run is the moment its
-  gate deadline is enforced. Deleting a file forgets the run; there is no pruning job.
+  gate deadline is enforced. Failed runs carry their diagnosed `kind` and a **Retry** button in
+  the same view. Deleting a file forgets the run; there is no pruning job.
 * **Delivery is best-effort.** A failed send is recorded in `deliveries` with `ok: false` and a
   `detail`, and the run still finishes — check `deliveries` rather than assuming a message went out.
 

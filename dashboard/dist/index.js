@@ -103,6 +103,7 @@
     "runs.approve": "Answer this gate now; the run resumes from where it stopped.",
     "runs.resume": "Paste the agent step's result here and resume the run right where it paused.",
     "runs.agent": "Let the host agent produce this step's output now, then resume right where it paused.",
+    "runs.retry": "Re-run this failed run from the step that failed; steps that already finished are kept.",
     "runs.open": "Open the saved workflow this run belongs to.",
     "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
@@ -333,6 +334,8 @@
     ".vw-label{color:var(--vw-dim);font-size:11px;margin:8px 0 2px}",
     ".vw-hint,.vw-error{color:var(--vw-dim);font-size:11px;margin:2px 0}",
     ".vw-error{color:var(--vw-danger)}",
+    // The diagnosed-failure chip next to a failed run's error text; the hint rides the title.
+    ".vw-chip{display:inline-block;margin-left:6px;padding:0 8px;border-radius:9px;font-size:11px;line-height:18px;border:1px solid var(--vw-line);background:var(--vw-node);color:var(--vw-dim)}",
     ".vw-canvas{display:block}",
     ".vw-canvas g.vw-node{cursor:grab}",
     ".vw-canvas g.vw-node:active{cursor:grabbing}",
@@ -1569,6 +1572,29 @@
       });
     }
 
+    function retryFailedRun() {
+      // The same reset ``/workflow run retry <run_id>`` performs: the runner re-enters at the
+      // failed step, reusing everything that already produced output. Only a failed run is
+      // retried — a parked gate is answered, not restarted.
+      if (!lastRun || !lastRun.run_id || lastRun.status !== "failed") {
+        note("no failed run");
+        return;
+      }
+      note("retrying\u2026");
+      call(API + "/runs/" + encodeURIComponent(lastRun.run_id) + "/retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }).then(function (data) {
+        showErrors([]);
+        renderRun(data);
+      }).catch(function (err) {
+        note("");
+        el.run.textContent = explain(err);
+        banner("Could not retry the run \u2014 " + explain(err), "error");
+      });
+    }
+
     // --------------------------------------------------------------- run box
     function line(tag, text, cls) {
       var node = document.createElement(tag);
@@ -1695,6 +1721,16 @@
         banner("Run " + (result.run_id || "") + " failed \u2014 " + (error.node_id ? error.node_id + ": " : "") + (error.msg || ""), "error");
         box.appendChild(line("h4", "run failed"));
         box.appendChild(line("pre", (error.node_id ? error.node_id + ": " : "") + (error.msg || "")));
+        // A diagnosed failure gets a labelled chip; the hint is the chip's tooltip and the
+        // raw message above stays the evidence. No diagnosis, no chip — as before.
+        if (error.kind) {
+          var chip = line("span", error.kind, "vw-chip");
+          chip.title = error.hint || "diagnosed failure kind";
+          box.appendChild(chip);
+        }
+        var retryRun = button("Retry run", function () { retryFailedRun(); });
+        retryRun.title = TIPS["runs.retry"];
+        box.appendChild(retryRun);
         var failedDelivery = deliveryLine(result);
         if (failedDelivery) box.appendChild(failedDelivery);
         return;
@@ -2017,6 +2053,23 @@
       });
     }
 
+    function retryRow(row) {
+      setBusy(row.run_id);
+      setNote("retrying \u2026");
+      fetchJSON(API + "/runs/" + encodeURIComponent(row.run_id) + "/retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }).then(function (data) {
+        setBusy("");
+        setNote(row.run_id + ": " + ((data && data.status) || "no status"));
+        fresh();
+      }).catch(function (err) {
+        setBusy("");
+        setNote(explain(err));
+      });
+    }
+
     /** "3m ago" — the row has to say how old a waiting gate is. */
     function when(seconds) {
       var age = Math.max(0, Math.round(Date.now() / 1000 - Number(seconds || 0)));
@@ -2046,6 +2099,13 @@
           onClick: function () { props.onAnswer(row); },
         }, "Answer"));
       }
+      if (row.status === "failed") {
+        actions.push(h("button", {
+          key: "retry", type: "button", className: "vw-pill",
+          title: TIPS["runs.retry"], disabled: busy === row.run_id,
+          onClick: function () { retryRow(row); },
+        }, "Retry"));
+      }
       actions.push(h("button", {
         key: "open", type: "button", className: "vw-pill", title: TIPS["runs.open"],
         onClick: function () { props.onOpen(row.name); },
@@ -2070,7 +2130,11 @@
           : null,
         row.error
           ? h("p", { className: "vw-error" },
-              (row.error.node_id ? row.error.node_id + ": " : "") + (row.error.msg || ""))
+              (row.error.node_id ? row.error.node_id + ": " : "") + (row.error.msg || ""),
+              row.error.kind
+                ? h("span", { className: "vw-chip",
+                    title: row.error.hint || "diagnosed failure kind" }, " " + row.error.kind)
+                : null)
           : null,
         (row.deliveries || []).length
           ? h("p", { className: "vw-hint" }, "delivery: " + row.deliveries.map(function (d) {

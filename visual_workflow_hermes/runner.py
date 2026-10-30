@@ -168,8 +168,10 @@ def _spawn_with_retries(spawn, step: dict, state: dict) -> dict:
             if produced.get("error"):
                 err = StepError(str(produced["error"]))
                 # The diagnosis travels with the failure signal: the retry policy below keys
-                # off the kind, not off the prose.
+                # off the kind, not off the prose, and run_plan persists both into the error
+                # record so the canvases can hang a chip off them.
                 err.kind = produced.get("error_kind")
+                err.hint = produced.get("error_hint")
                 raise err
             return produced
         except StepError as exc:
@@ -254,7 +256,18 @@ def run_plan(plan: dict, state: dict, spawn=None, on_step=None, deliver=None) ->
                 raise StepError(f"unknown step kind {kind!r}")
         except StepError as exc:
             state["status"] = "failed"
-            state["error"] = {"node_id": sid, "msg": str(exc)}
+            # A diagnosis the spawn seam attached stays with the verdict on disk: ``kind`` is
+            # the machine-readable label the Runs view chips, ``hint`` its fix advice. A bare
+            # StepError (a bad expression, an expired gate) has neither — the record is then
+            # exactly the old shape, so old consumers never learn a new key.
+            failure: dict = {"node_id": sid, "msg": str(exc)}
+            kind = getattr(exc, "kind", None)
+            if kind:
+                failure["kind"] = kind
+                hint = getattr(exc, "hint", None)
+                if hint:
+                    failure["hint"] = hint
+            state["error"] = failure
             if on_step:
                 on_step(state)
             return state
@@ -347,6 +360,63 @@ def resume_plan(plan: dict, state: dict, answer, spawn=None, on_step=None, deliv
     state["cursor"] += 1
     state["pending"] = None
     state["status"] = "running"
+    return run_plan(plan, state, spawn=spawn, on_step=on_step, deliver=deliver)
+
+
+# A crashed retry leaves an honest "running" on the failed step (the reset is persisted before
+# any work). A legitimate retry cannot sit there long: every completed step is persisted on the
+# spot, waiting is only ever an approval gate (a ``pending``), and rate-limit backoff is seconds.
+# Past this window a run reset by a retry is unmistakably dead — a later retry takes it over.
+# Short of that window the retry may still be genuinely in flight in another process, and taking
+# it over would run its steps twice.
+RETRY_RECLAIM_SECONDS = 600.0
+
+
+def retryable(state: dict, now=None) -> bool:
+    """Whether a retry may take a run over: a failed one always, a crashed one once cold.
+
+    Only a run whose current ``running`` state was itself set by a retry reset qualifies: that
+    reset stamps ``retrying`` before any work, so a mid-retry crash leaves the marker behind.
+    A plain ``running`` run (a fresh run, or one mid-flight) has no marker — retrying it could
+    duplicate work, so it is refused. Pending states are answered, not re-run.
+    """
+    if state.get("status") == "failed":
+        return True
+    if state.get("status") != "running" or state.get("pending") is not None:
+        return False
+    started = state.get("retrying")
+    if not isinstance(started, (int, float)):
+        return False
+    moment = time.time() if now is None else float(now)
+    return moment - float(started) >= RETRY_RECLAIM_SECONDS
+
+
+def retry_failed(plan: dict, state: dict, spawn=None, on_step=None, deliver=None,
+                 now=None) -> dict:
+    """Re-run a failed run from the step it failed on, and keep going through the rest.
+
+    ``run_plan`` never advances the cursor past a failed step, so the stored state already
+    points at exactly the node to redo: clearing the verdict and returning the status to
+    ``running`` is the whole reset. Output that survived the failure is reused, so a retry
+    that succeeds repeats only the failed step and everything after it. Anything that is not
+    retryable (:func:`retryable`) — a parked gate, a run in flight, a finished one — raises
+    ``StepError`` instead of being silently restarted.
+    """
+    if not retryable(state, now):
+        raise StepError(
+            f"run {state.get('run_id', '?')!r} is {state.get('status')!r}, "
+            "not failed — nothing to retry"
+        )
+    state["error"] = None
+    state["pending"] = None
+    state["status"] = "running"
+    # Stamp the reset so a crash mid-retry leaves a state a later retry can pick up
+    # (:func:`retryable` keys off this marker once it is cold) — not a half-cleared verdict
+    # claiming an outcome it never reached. It is persisted before the work: a crash during
+    # the first step then still shows the reset, not a stale failure.
+    state["retrying"] = time.time() if now is None else float(now)
+    if on_step:
+        on_step(state)
     return run_plan(plan, state, spawn=spawn, on_step=on_step, deliver=deliver)
 
 

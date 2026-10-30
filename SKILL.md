@@ -65,6 +65,13 @@ start; do not invent field names from memory.
   `answer` (or `structured` for a JSON object conditions can read).
 * `failed` — report `error`; do not retry blindly. A gate that expired says
   `approval timed out`; a step that ran out of `retries` says what the bot returned.
+  A diagnosed failure carries `error.kind` (rate limited, trust refusal, …) and `error.hint`,
+  one fix sentence — relay both. When the user wants the run to go again, the deliberate path
+  is the offered one: the canvas **Retry** button, or `workflow_design_run`
+  `retry=<run_id>` / `/workflow run retry <run_id>` — it re-enters the run at the failed step
+  and reuses what already produced output. A run crashed mid-retry shows `running` with no
+  verdict; once it sits cold for 10 minutes, the same retry requests take it over. Never
+  splice a run_id into a fresh Run.
 
 Never guess a `run_id` or gate id: use the ones in the response.
 
@@ -82,5 +89,6 @@ cron job — never promise a listener the plugin does not own.
 
 Read the run, do not narrate it: `outputs` (per node), `skipped` (nodes a false condition gated
 off), `attempts` (tries each agent step took), `deliveries` (each send attempt with `ok`),
-`error` (`{node_id, msg}`) when a run failed. The **Runs** view in a canvas lists the same runs
-on disk, newest first.
+`error` (`{node_id, msg, kind?, hint?}` — the optional pair is the diagnosed-failure label
+and its fix advice) when a run failed. The **Runs** view in a canvas lists the same runs on
+disk, newest first, chips a diagnosed kind, and offers Retry for failed runs.

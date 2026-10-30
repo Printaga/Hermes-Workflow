@@ -87,6 +87,7 @@ const TIPS = {
   "runs.approve": "Answer this gate now; the run resumes from where it stopped.",
   "runs.resume": "Paste the agent step's result here and resume the run right where it paused.",
   "runs.agent": "Let the host agent produce this step's output now, then resume right where it paused.",
+  "runs.retry": "Re-run this failed run from the step that failed; steps that already finished are kept.",
   "runs.open": "Open the saved workflow this run belongs to.",
   "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
@@ -312,6 +313,8 @@ const CSS = [
   ".vw-label{color:var(--vw-dim);font-size:11px;margin:8px 0 2px}",
   ".vw-hint,.vw-error{color:var(--vw-dim);font-size:11px;margin:2px 0}",
   ".vw-error{color:var(--vw-danger)}",
+  // The diagnosed-failure chip next to a failed run's error text; the hint rides the title.
+  ".vw-chip{display:inline-block;margin-left:6px;padding:0 8px;border-radius:9px;font-size:11px;line-height:18px;border:1px solid var(--vw-line);background:var(--vw-node);color:var(--vw-dim)}",
   ".vw-canvas{display:block}",
   ".vw-canvas g.vw-node{cursor:grab}",
   ".vw-canvas g.vw-node:active{cursor:grabbing}",
@@ -1569,6 +1572,19 @@ function createDesigner(host, call) {
     });
   }
 
+  function retryStoredRun(run) {
+    call("/runs/" + encodeURIComponent(run.run_id) + "/retry", {
+      method: "POST",
+      body: {},
+    }).then((data) => {
+      el.railError.textContent = "";
+      note(run.run_id + ": " + ((data && data.status) || "no status"));
+      renderRuns();
+    }).catch((err) => {
+      el.railError.textContent = explain(err);
+    });
+  }
+
   function answerRun(run, option) {
     call("/runs/" + encodeURIComponent(run.run_id) + "/respond", {
       method: "POST",
@@ -1653,6 +1669,14 @@ function createDesigner(host, call) {
       failed.textContent = (run.error.node_id ? run.error.node_id + ": " : "") +
         (run.error.msg || "");
       row.appendChild(failed);
+      // A diagnosed failure gets a labelled chip in the row, the hint rides its title.
+      if (run.error.kind) {
+        const chip = document.createElement("span");
+        chip.className = "vw-chip";
+        chip.textContent = run.error.kind;
+        chip.title = run.error.hint || "diagnosed failure kind";
+        row.appendChild(chip);
+      }
     }
     if ((run.deliveries || []).length) {
       const sent = document.createElement("p");
@@ -1671,6 +1695,11 @@ function createDesigner(host, call) {
         pick.title = TIPS["runs.approve"];
         actions.appendChild(pick);
       });
+    }
+    if (run.status === "failed") {
+      const retry = button("Retry", () => retryStoredRun(run));
+      retry.title = TIPS["runs.retry"];
+      actions.appendChild(retry);
     }
     if (run.name) {
       const reopen = button("Open", () => {
@@ -2078,6 +2107,28 @@ function createDesigner(host, call) {
     });
   }
 
+  function retryFailedRun() {
+    // The same reset ``/workflow run retry <run_id>`` performs: the runner re-enters at the
+    // failed step, reusing everything that already produced output. Only a failed run is
+    // retried — a parked gate is answered, not restarted.
+    if (!lastRun || !lastRun.run_id || lastRun.status !== "failed") {
+      note("no failed run");
+      return;
+    }
+    note("retrying\u2026");
+    call("/runs/" + encodeURIComponent(lastRun.run_id) + "/retry", {
+      method: "POST",
+      body: {},
+    }).then((data) => {
+      showErrors([]);
+      renderRun(data);
+    }).catch((err) => {
+      note("");
+      el.run.textContent = explain(err);
+      banner("Could not retry the run \u2014 " + explain(err), "error");
+    });
+  }
+
   // --------------------------------------------------------------- run box
   function line(tag, text, cls) {
     const node = document.createElement(tag);
@@ -2195,6 +2246,16 @@ function createDesigner(host, call) {
       banner("Run " + (result.run_id || "") + " failed \u2014 " + (error.node_id ? error.node_id + ": " : "") + (error.msg || ""), "error");
       box.appendChild(line("h4", "run failed"));
       box.appendChild(line("pre", (error.node_id ? error.node_id + ": " : "") + (error.msg || "")));
+      // A diagnosed failure gets a labelled chip; the hint is the chip's tooltip and the
+      // raw message above stays the evidence. No diagnosis, no chip — as before.
+      if (error.kind) {
+        const chip = line("span", error.kind, "vw-chip");
+        chip.title = error.hint || "diagnosed failure kind";
+        box.appendChild(chip);
+      }
+      const retryRun = button("Retry run", () => retryFailedRun());
+      retryRun.title = TIPS["runs.retry"];
+      box.appendChild(retryRun);
       const failedDelivery = deliveryLine(result);
       if (failedDelivery) box.appendChild(failedDelivery);
       return;

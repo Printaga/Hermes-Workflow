@@ -20,6 +20,7 @@ USAGE = (
     "  /workflow save <name> <json>        — validate and save a designer graph\n"
     "  /workflow validate <name>           — check a saved design without running it\n"
     "  /workflow run <name>                — execute <name> now (manual trigger)\n"
+    "  /workflow run retry <run_id>        — re-run a failed run from the step that failed\n"
     "  /workflow approve <run> <gate> <answer> — answer an approval gate"
 )
 
@@ -118,7 +119,10 @@ class WorkflowDesignerRuntime:
             if verb == "validate" and rest:
                 return self._cmd_validate(rest.split()[0])
             if verb == "run" and rest:
-                return self._cmd_run(rest.split()[0])
+                parts = rest.split()
+                if parts[0].lower() == "retry" and len(parts) > 1:
+                    return self._describe(self.tool_run({"retry": parts[1]}))
+                return self._cmd_run(parts[0])
             if verb == "approve" and rest:
                 parts = rest.split(maxsplit=2)
                 if len(parts) == 3:
@@ -202,7 +206,21 @@ class WorkflowDesignerRuntime:
                 f"node_id={pending.get('node_id')} answer=<output>"
             )
         if status == "failed":
-            return f"{head}\n  {result.get('error')}"
+            err = result.get("error") or {}
+            if isinstance(err, dict):
+                detail = str(err.get("msg") or "")
+                # The diagnosis is advisory, one line under the failure itself — never a
+                # replacement for the raw message the user may want to debug from.
+                if err.get("kind"):
+                    detail += f"\n  kind: {err['kind']}"
+                if err.get("hint"):
+                    detail += f"\n  hint: {err['hint']}"
+            else:
+                detail = str(err)
+            return (
+                f"{head}\n  {detail}\n"
+                f"  retry from the failed step: /workflow run retry {result.get('run_id')}"
+            )
         outputs = result.get("outputs") or {}
         keys = ", ".join(sorted(outputs)) or "(none)"
         skipped = result.get("skipped") or []
@@ -247,7 +265,14 @@ class WorkflowDesignerRuntime:
         return {"ok": not errors, "errors": errors}
 
     def tool_run(self, args, **_) -> dict:
-        """Start a run: validate, build the plan, execute until done or paused."""
+        """Start a run: validate, build the plan, execute until done or paused.
+
+        With ``retry: <run_id>`` instead of ``name`` it re-runs a failed run from the step
+        it failed on — the same runner reset a canvas Retry button goes through.
+        """
+        retry_id = str(args.get("retry") or "").strip()
+        if retry_id:
+            return self._tool_run_retry(retry_id)
         from .convert import build_run_plan
         from .runner import new_state, run_plan
         from .schema import validate_designer_graph
@@ -269,6 +294,33 @@ class WorkflowDesignerRuntime:
         self._runs().save(state)
         state = run_plan(plan, state, spawn=_subagent_spawn(self.ctx),
                          on_step=self._runs().save, deliver=_deliver)
+        return self._result(state)
+
+    def _tool_run_retry(self, run_id: str) -> dict:
+        """Re-run a failed run from its failed step (``workflow_design_run retry=<id>``).
+
+        All guards sit here (not only in the runner) so the tool reports every refusal as a
+        result the dispatcher can print, never a raise into the tool dispatcher.
+        """
+        from .convert import build_run_plan
+        from .runner import StepError, retry_failed, retryable
+
+        try:
+            state = self._runs().load(run_id)
+        except (FileNotFoundError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        if not retryable(state):
+            return {
+                "ok": False,
+                "error": f"run {run_id!r} is {state.get('status')!r}, "
+                         "not failed — nothing to retry",
+            }
+        try:
+            plan = build_run_plan(self._store().load(state["name"]))
+            state = retry_failed(plan, state, spawn=_subagent_spawn(self.ctx),
+                                 on_step=self._runs().save, deliver=_deliver)
+        except (StepError, ValueError, FileNotFoundError) as exc:
+            return {"ok": False, "error": str(exc)}
         return self._result(state)
 
     def tool_respond(self, args, **_) -> dict:

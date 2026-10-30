@@ -170,6 +170,59 @@ def test_an_approval_can_be_given_the_context_it_shows(canvas):
     assert "delete current.context" in source, f"{name} stores a cleared context as empty"
 
 
+# ------------------------------------------------ failed runs: diagnosis chips + retry
+
+# A diagnosed failure (spawn.py) reaches the stored error record as ``kind``/``hint``; each
+# canvas must label the chip with the kind and ride the hint on its title — and offer a
+# retry, which re-enters the run at the failed step instead of rebuilding it.
+CHIP = {
+    "dashboard": '"vw-chip"',
+    "desktop": '"vw-chip"',
+    "widget": 'className = "chip"',
+}
+
+RETRY_GUARD = {
+    "dashboard": 'lastRun.status !== "failed"',
+    "desktop": 'lastRun.status !== "failed"',
+    "widget": 'lastStatus !== "failed"',
+}
+
+
+def test_a_failed_run_labels_its_diagnosed_kind_with_the_hint_as_tooltip(canvas):
+    name, source = canvas
+    body = body_of(source, "renderRun")
+    assert "error.kind" in body, f"{name} does not show a run's diagnosed kind"
+    assert 'error.hint || "diagnosed failure kind"' in source, (
+        f"{name} drops the fix hint the backend sent"
+    )
+    assert CHIP[name] in source, f"{name} has no chip element for the kind"
+
+
+def test_the_runs_view_carries_the_chip_for_a_failed_run_too(canvas):
+    name, source = canvas
+    if name == "widget":
+        pytest.skip("the standalone widget has no Runs view")
+    where = "error.kind" if name == "desktop" else "row.error.kind"
+    assert where in source, f"{name}'s Runs view never reads a run's diagnosed kind"
+    if name == "dashboard":
+        assert "row.error.kind" in source, "the dashboard's Runs row must chip as well"
+
+
+def test_a_failed_run_can_be_retried_and_only_when_it_failed(canvas):
+    name, source = canvas
+    body = body_of(source, "retryFailedRun")
+    assert RETRY_GUARD[name] in body, f"{name} retries more than failed runs"
+    assert '"/retry"' in body, f"{name} has no retry call in retryFailedRun"
+
+
+def test_the_retry_control_is_tipped_and_offered_in_the_failed_card(canvas):
+    name, source = canvas
+    assert 'TIPS["runs.retry"]' in source, f"{name} never applies the retry tooltip"
+    assert "Retry run" in body_of(source, "renderRun"), (
+        f"{name}'s failed-run card offers no Retry control"
+    )
+
+
 @pytest.mark.parametrize("name", ["dashboard", "desktop"])
 def test_the_collapsed_inspector_does_not_ask_for_a_percentage_height(name):
     source = CANVASES[name].read_text(encoding="utf-8")

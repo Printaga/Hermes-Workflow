@@ -1,8 +1,10 @@
+import time
+
 import pytest
 
 import visual_workflow_hermes.runner as runner
 from visual_workflow_hermes.runner import (StepError, evaluate_condition, new_state,
-                                           resume_plan, run_plan)
+                                           resume_plan, retry_failed, retryable, run_plan)
 
 
 def _plan(*steps):
@@ -84,8 +86,11 @@ def test_a_second_rate_limited_failure_still_fails_the_run(monkeypatch):
         spawn=lambda s, o, st: {"error": "rate limited: 429 — wait.",
                                 "error_kind": "rate limited"})
     assert state["status"] == "failed"
-    assert state["error"] == {"node_id": "a",
-                              "msg": "rate limited: 429 — wait."}
+    # The diagnosed kind persists with the verdict (plan item A): the run record now names
+    # the failure kind as well as the message; a hint is absent here because the fake spawn
+    # attached none.
+    assert state["error"] == {"node_id": "a", "msg": "rate limited: 429 — wait.",
+                              "kind": "rate limited"}
     assert state["attempts"] == {"a": 2}, "the automatic retry is used up, not extended"
     assert naps == [runner.RATE_LIMIT_BACKOFF_SECONDS], "napped once, not forever"
 
@@ -238,6 +243,138 @@ def test_failing_agent_marks_run_failed_with_the_node_id():
     assert state["error"] == {"node_id": "a", "msg": "model refused"}
 
 
+# -- persisted failure diagnostics (plan item A) ------------------------------
+# The diagnosis spawn.py attaches to the in-flight failure must survive into the record on
+# disk — it is what the Runs view chips and what a retry decision can key off later.
+
+def test_a_diagnosed_failure_persists_its_kind_and_hint():
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    state = run_plan(plan, new_state(plan, "k1"), spawn=lambda s, o, st: {
+        "error": "auth failed: 401 — Invalid API key",
+        "error_kind": "auth failed",
+        "error_hint": "the provider rejected the credentials",
+    })
+    assert state["status"] == "failed"
+    assert state["error"] == {
+        "node_id": "a", "msg": "auth failed: 401 — Invalid API key",
+        "kind": "auth failed", "hint": "the provider rejected the credentials",
+    }
+
+
+def test_an_undiagnosed_failure_stays_without_a_kind():
+    """No diagnosis means no invented one: the record is the old shape exactly."""
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    state = run_plan(plan, new_state(plan, "k2"),
+                     spawn=lambda s, o, st: {"error": "model refused"})
+    assert state["error"] == {"node_id": "a", "msg": "model refused"}
+    assert "kind" not in state["error"] and "hint" not in state["error"]
+
+
+def test_the_persisted_kind_survives_a_store_round_trip(tmp_path):
+    """A chip in the Runs view reads what JSON carried out and back — never a live exception."""
+    from visual_workflow_hermes.store import RunStore
+
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    state = run_plan(plan, new_state(plan, "abc123def456"), spawn=lambda s, o, st: {
+        "error": "rate limited: 429 — wait.", "error_kind": "rate limited",
+        "error_hint": "the model provider asked to slow down",
+    })
+    runs = RunStore(root=tmp_path / "runs")
+    runs.save(state)
+    assert runs.load("abc123def456")["error"]["kind"] == "rate limited"
+    assert runs.load("abc123def456")["error"]["hint"] == \
+        "the model provider asked to slow down"
+
+
+# -- retrying a failed run from the failed step (plan item C) ------------------
+
+def test_retry_failed_reruns_the_failed_step_and_finishes():
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    state = run_plan(plan, new_state(plan, "rt1"), spawn=lambda *a: {"error": "boom"})
+    assert state["status"] == "failed"
+    done = retry_failed(plan, state, spawn=lambda *a: {"output": "now it works"})
+    assert done["status"] == "done"
+    assert done["outputs"]["a"] == "now it works"
+    assert done["error"] is None, "the old verdict must not survive a retry"
+
+
+def test_retry_failed_reenters_at_the_failed_step_keeping_earlier_outputs():
+    plan = _plan(
+        {"id": "a", "kind": "agent", "after": [], "prompt": "p"},
+        {"id": "b", "kind": "agent", "after": ["a"], "prompt": "q"},
+    )
+
+    def spawn(step, outputs, state):
+        return {"error": "boom"} if step["id"] == "b" else {"output": "first"}
+
+    state = run_plan(plan, new_state(plan, "rt2"), spawn=spawn)
+    assert state["status"] == "failed" and state["error"]["node_id"] == "b"
+    assert state["outputs"]["a"] == "first"
+
+    done = retry_failed(plan, state, spawn=lambda s, o, st: {"output": "recovered"})
+    assert done["status"] == "done"
+    assert done["outputs"]["a"] == "first", "earlier output must survive a retry"
+    assert done["outputs"]["b"] == "recovered"
+
+
+def test_retry_failed_refuses_a_run_that_is_not_failed():
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    parked = run_plan(plan, new_state(plan, "rt3"), spawn=None)
+    assert parked["status"] == "awaiting_agent"
+    with pytest.raises(StepError, match="not failed"):
+        retry_failed(plan, parked)
+    done = run_plan(plan, new_state(plan, "rt4"), spawn=lambda *a: {"output": "ok"})
+    assert done["status"] == "done"
+    with pytest.raises(StepError, match="not failed"):
+        retry_failed(plan, done)
+
+
+def test_retry_failed_persists_the_reset_before_running():
+    """A crash mid-retry must leave a resumable "running" state, not a half-cleared one."""
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    state = run_plan(plan, new_state(plan, "rt5"), spawn=lambda *a: {"error": "boom"})
+    saved = []
+    retry_failed(plan, state, spawn=lambda *a: {"output": "ok"},
+                 on_step=lambda s: saved.append(s["status"]))
+    assert saved[0] == "running", f"the retry reset was never persisted; saw {saved}"
+
+
+def test_a_retry_reset_is_stamped_so_the_later_retry_can_reclaim_it():
+    """The reset stamp is what a later retry keys off: a crashed retry (`retrying` set, no
+    verdict, nothing pending) is taken over once it is cold; a plain `running` run – someone
+    may still be stepping through it in another process – stays untouchable."""
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    crashed = run_plan(plan, new_state(plan, "rt6"), spawn=lambda *a: {"error": "boom"})
+    crashed.update({"status": "running", "error": None, "retrying": time.time() - 601.0})
+    assert retryable(crashed, now=time.time()) is True
+    done = retry_failed(plan, crashed, spawn=lambda *a: {"output": "reclaimed"})
+    assert done["status"] == "done"
+
+    fresh = dict(crashed, run_id="rt7", retrying=time.time() - 10.0)
+    with pytest.raises(StepError, match="not failed"):
+        retry_failed(plan, fresh)
+
+    in_flight = dict(crashed, run_id="rt8")
+    in_flight.pop("retrying")
+    with pytest.raises(StepError, match="not failed"):
+        retry_failed(plan, in_flight)
+
+    assert retryable(dict(crashed, status="done")) is False
+    assert retryable(dict(crashed, pending={"node_id": "a"})) is False
+
+
+def test_retry_failed_persists_the_reset_before_running():
+    """A crash mid-retry must leave a resumable "running" state, not a half-cleared one."""
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p"})
+    retries = run_plan(plan, new_state(plan, "rt5"), spawn=lambda *a: {"error": "boom"})
+    saved = []
+    retry_failed(plan, retries, spawn=lambda *a: {"output": "ok"},
+                 on_step=lambda s: saved.append(dict(s)))
+    assert saved[0]["status"] == "running", (
+        f"the retry reset was never persisted; saw {saved}")
+    assert "retrying" in saved[0], "a reset without its stamp cannot be reclaimed later"
+
+
 # -- runtime integration: persistence across tool calls ---------------------
 
 class _Ctx:
@@ -305,6 +442,85 @@ def test_runtime_respond_rejects_a_node_that_is_not_pending(tmp_path):
     bad = rt.tool_respond({"run_id": run_id, "node_id": "out", "answer": "x"})
     assert bad["ok"] is False
     assert "not waiting on" in bad["error"]
+
+
+# -- retrying a failed run from chat (plan item C's chat surface) -------------
+
+def test_runtime_tool_run_retry_reruns_a_failed_run(tmp_path, monkeypatch):
+    """``workflow_design_run retry=<run_id>`` is the same runner reset the canvas route does."""
+    import visual_workflow_hermes.runtime as runtime_mod
+
+    rt = _runtime(tmp_path)
+    saved = rt.tool_save({"name": "flaky", "graph": {"name": "flaky", "nodes": [
+        {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "one", "type": "agent", "prompt": "first", "after": ["t"]},
+        {"id": "two", "type": "agent", "prompt": "second", "after": ["one"]},
+    ]}})
+    assert saved["ok"] is True
+
+    def flaky(step, outputs, run):
+        return {"output": "first"} if step["id"] == "one" else {"error": "boom"}
+
+    monkeypatch.setattr(runtime_mod, "_subagent_spawn", lambda ctx: flaky)
+    failed = rt.tool_run({"name": "flaky"})
+    assert failed["status"] == "failed"
+    assert failed["error"]["node_id"] == "two"
+    assert failed["outputs"]["one"] == "first"
+
+    monkeypatch.setattr(runtime_mod, "_subagent_spawn",
+                        lambda ctx: (lambda *a: {"output": "recovered"}))
+    retried = rt.tool_run({"retry": failed["run_id"]})
+    assert retried["status"] == "done", retried
+    assert retried["outputs"]["two"] == "recovered"
+    assert retried["outputs"]["one"] == "first", "earlier work survives a retry"
+
+
+def test_runtime_run_retry_refuses_a_run_that_is_not_failed(tmp_path):
+    rt = _runtime(tmp_path)
+    _save_approval_design(rt)
+    run_id = rt.tool_run({"name": "demo"})["run_id"]  # parks at the agent step
+    bad = rt.tool_run({"retry": run_id})
+    assert bad["ok"] is False
+    assert "not failed" in bad["error"]
+
+
+def test_runtime_run_retry_reports_an_unknown_run(tmp_path):
+    rt = _runtime(tmp_path)
+    bad = rt.tool_run({"retry": "ffffffffffff"})
+    assert bad["ok"] is False
+    assert "no run" in bad["error"]
+
+
+def test_runtime_tool_run_retry_reclaims_a_crashed_retry(tmp_path, monkeypatch):
+    """The chat retry shares the runner's reclaim rule, so a run a crashed retry left as a
+    stamped ``running`` is taken over once it is cold — never while it could be in flight."""
+    import time as time_mod
+
+    import visual_workflow_hermes.runtime as runtime_mod
+    from visual_workflow_hermes.runner import RETRY_RECLAIM_SECONDS
+
+    rt = _runtime(tmp_path)
+    rt.tool_save({"name": "flaky", "graph": {"name": "flaky", "nodes": [
+        {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "one", "type": "agent", "prompt": "first", "after": ["t"]},
+    ]}})
+    run_id = rt.tool_run({"name": "flaky"})["run_id"]  # parks waiting on an agent
+    # Fabricate the crash: reset done (stamped), then nothing further ever ran.
+    state = rt._run_store.load(run_id)
+    state.update({"status": "running", "error": None, "pending": None,
+                  "cursor": 0, "retrying": time_mod.time()})  # 0: parked on `one` itself
+    rt._run_store.save(state)
+    bad = rt.tool_run({"retry": run_id})  # fresh stamp: could still be in flight
+    assert bad["ok"] is False and "not failed" in bad["error"]
+
+    state = rt._run_store.load(run_id)
+    state["retrying"] = time_mod.time() - RETRY_RECLAIM_SECONDS - 5
+    rt._run_store.save(state)
+    monkeypatch.setattr(runtime_mod, "_subagent_spawn",
+                        lambda ctx: (lambda *a: {"output": "reclaimed"}))
+    retried = rt.tool_run({"retry": run_id})
+    assert retried["status"] == "done", retried
+    assert retried["outputs"]["one"] == "reclaimed"
 
 
 # -- terminal state is persisted -------------------------------------------

@@ -36,6 +36,8 @@ REQUIRED_ROUTES = {
     ("/designs/{name}/validate", "post"),
     ("/designs/{name}/run", "post"),
     ("/runs/{run_id}/respond", "post"),
+    # A failed run is retried from its failed step (the runner owns the reset).
+    ("/runs/{run_id}/retry", "post"),
     # Runs view: every run on disk (not just the one this tab started), and one run's detail.
     ("/runs", "get"),
     ("/runs/{run_id}", "get"),
@@ -507,6 +509,128 @@ def test_respond_route_can_generate_the_parked_agent_step_with_the_host_llm(tmp_
     # The remaining agent step ran through the same backend too.
     assert done["outputs"]["two"] == "generated now"
     assert done["pending"] is None
+
+
+def test_retry_route_reruns_a_failed_run_from_its_failed_step(tmp_path, monkeypatch):
+    """A failed run is retried from the step that failed, reusing the outputs that survived.
+
+    The route shares the run route's spawn decision, so the retry picks up whatever backend
+    exists now — the run route's fail-fast path built the failed state to be retried from.
+    """
+    from visual_workflow_hermes.spawn import _make_spawn
+
+    client, mod = _client(tmp_path, monkeypatch)
+    graph = {
+        "name": "flaky",
+        "nodes": [
+            {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+            {"id": "one", "type": "agent", "prompt": "first", "after": ["t"]},
+            {"id": "two", "type": "agent", "prompt": "second", "after": ["one"]},
+            {"id": "out", "type": "output", "after": ["two"]},
+        ],
+    }
+    assert client.post("/api/plugins/visual-workflow/designs/flaky",
+                       json={"graph": graph}).json()["ok"] is True
+
+    def bad_second(step, outputs, run):
+        return {"output": "fine"} if step["id"] == "one" else {"error": "boom"}
+
+    monkeypatch.setattr(mod, "llm_spawn", lambda: bad_second)
+    failed = client.post("/api/plugins/visual-workflow/designs/flaky/run").json()
+    assert failed["status"] == "failed"
+    assert failed["error"]["node_id"] == "two"
+    assert failed["outputs"]["one"] == "fine"
+
+    monkeypatch.setattr(mod, "llm_spawn",
+                        lambda: _make_spawn(_FakeCompleteLlm(text="recovered")))
+    retried = client.post(
+        f"/api/plugins/visual-workflow/runs/{failed['run_id']}/retry",
+        headers={"Content-Type": "application/json"},
+        content="{}",
+    ).json()
+    assert retried["status"] == "done", retried
+    assert retried["outputs"]["two"] == "recovered"
+    assert retried["outputs"]["one"] == "fine", "earlier output must survive a retry"
+
+
+def test_retry_route_refuses_a_run_that_is_not_failed_and_404s_the_unknown(tmp_path, monkeypatch):
+    client, mod = _client(tmp_path, monkeypatch)
+    _save_gate_design(client)
+    monkeypatch.setattr(mod, "llm_spawn", lambda: None)
+    started = client.post("/api/plugins/visual-workflow/designs/gated/run").json()
+    assert started["status"] == "awaiting_approval"
+
+    refused = client.post(
+        f"/api/plugins/visual-workflow/runs/{started['run_id']}/retry",
+        headers={"Content-Type": "application/json"},
+        content="{}",
+    )
+    assert refused.status_code == 409
+    assert "not failed" in refused.json()["detail"]
+
+    assert client.post(
+        "/api/plugins/visual-workflow/runs/ffffffffffff/retry",
+        headers={"Content-Type": "application/json"},
+        content="{}",
+    ).status_code == 404
+
+
+def test_retry_route_reclaims_a_run_crashed_mid_retry_once_it_is_cold(tmp_path, monkeypatch):
+    """A retry reset stamped before any work survives a crash as an honest ``running`` state
+    with no verdict. While the stamp is fresh the retry may still be in flight in some other
+    process, so the request is refused; once it is cold the next retry takes the run over and
+    finishes it — a crash mid-retry never wedges a run behind every shipped path."""
+    import time as time_mod
+
+    from visual_workflow_hermes.runner import RETRY_RECLAIM_SECONDS
+    from visual_workflow_hermes.spawn import _make_spawn
+
+    client, mod = _client(tmp_path, monkeypatch)
+    graph = {
+        "name": "colder",
+        "nodes": [
+            {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+            {"id": "one", "type": "agent", "prompt": "only", "after": ["t"]},
+            {"id": "out", "type": "output", "after": ["one"]},
+        ],
+    }
+    assert client.post("/api/plugins/visual-workflow/designs/colder",
+                       json={"graph": graph}).json()["ok"] is True
+    monkeypatch.setattr(mod, "llm_spawn", lambda: lambda *a: {"error": "boom"})
+    failed = client.post("/api/plugins/visual-workflow/designs/colder/run").json()
+    assert failed["status"] == "failed"
+    run_id = failed["run_id"]
+
+    def post_retry():
+        return client.post(
+            f"/api/plugins/visual-workflow/runs/{run_id}/retry",
+            headers={"Content-Type": "application/json"}, content="{}")
+
+    # Simulate the crash mid-retry: the reset persisted (stamped but fresh), then died.
+    runs = mod._runs()
+    state = runs.load(run_id)
+    state.update({"status": "running", "error": None, "pending": None,
+                  "retrying": time_mod.time()})
+    runs.save(state)
+    refused = post_retry()
+    assert refused.status_code == 409, refused.text
+
+    # A different kind of ``running`` is equally untouchable: no stamp at all, i.e. a run
+    # that may still genuinely be stepping through its plan somewhere.
+    plain = runs.load(run_id)
+    plain.pop("retrying")
+    runs.save(plain)
+    assert post_retry().status_code == 409
+
+    # Cold stamp and a working backend now: the retry takes over and finishes the run.
+    monkeypatch.setattr(mod, "llm_spawn",
+                        lambda: _make_spawn(_FakeCompleteLlm(text="reclaimed")))
+    cold = runs.load(run_id)
+    cold.update({"retrying": time_mod.time() - RETRY_RECLAIM_SECONDS - 5})
+    runs.save(cold)
+    done = post_retry().json()
+    assert done["status"] == "done", done
+    assert done["outputs"]["one"] == "reclaimed"
 
 
 def test_agent_generate_without_a_backend_leaves_the_run_resumable(tmp_path, monkeypatch):
