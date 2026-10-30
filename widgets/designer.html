@@ -126,7 +126,6 @@
     <button class="pill" id="run" type="button">Run</button>
     <button class="pill" id="copy" type="button">Copy JSON</button>
     <button class="pill" id="load" type="button">Load example</button>
-    <button class="pill" id="connect" type="button">Connect</button>
     <button class="pill" id="save" type="button" data-hermes-send="workflow save">Save to Hermes</button>
   </div>
   <div id="main">
@@ -200,7 +199,6 @@
     "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
     "bar.name": "Name this workflow is saved and run under.",
     "bar.validate": "Check the graph without saving it.",
-    "bar.connect": "Connect the two most recently clicked nodes (parent first).",
     "presets.daily": "Runs once every day at the time you pick.",
     "presets.weekdays": "Runs Monday to Friday at the time you pick.",
     "presets.weekly": "Runs once a week on the day and time you pick.",
@@ -363,10 +361,10 @@
   var graph = clone(DEFAULT_GRAPH);
   var selected = null;
   var selectedEdge = null;
-  var linkQueue = [];
   var linkArm = null;   // source node id after a click on an output port
   var dragLink = null;  // live drag from an output port: {from, x1, y1, x2, y2}
   var profiles = [];    // host profiles ("bots") offered to agent nodes
+  var models = [];      // host model catalog: [{slug, label, models}]
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
   function node(id) { return graph.nodes.filter(function (n) { return n.id === id; })[0] || null; }
@@ -632,7 +630,6 @@
 
     graph.nodes.forEach(function (n) {
       var isSelected = n.id === selected;
-      var queued = linkQueue.indexOf(n.id) >= 0;
       var g = svgEl("g", { transform: "translate(" + n.x + "," + n.y + ")", "class": "node" });
       g.setAttribute("data-id", n.id);
       // SVG tooltips are a child <title>, not a title attribute.
@@ -643,7 +640,7 @@
       var box = {
         width: NODE_W, height: NODE_H, rx: 6,
         fill: isNote ? "var(--vw-note-" + noteColor(n) + ")" : "var(--card)",
-        stroke: (isSelected || queued) ? "var(--accent)" : "var(--border)",
+        stroke: isSelected ? "var(--accent)" : "var(--border)",
         "stroke-width": isSelected ? 2 : 1
       };
       // A dashed edge is the cheapest "this is paper, not a step" cue that survives theming.
@@ -742,9 +739,6 @@
     selected = id;
     selectedEdge = null;
     setInspector(true);
-    // The queue is "the two most recently clicked nodes", parent first. Clicking a node
-    // again must not drop it (that would make click-click-Connect impossible).
-    linkQueue = linkQueue.filter(function (x) { return x !== id; }).concat([id]).slice(-2);
     buildInspector();
     draw();
   }
@@ -859,20 +853,11 @@
     });
     selected = null;
     selectedEdge = null;
-    linkQueue = [];
     linkArm = null;
     buildInspector();
     draw();
     note("removed " + removed);
     return true;
-  }
-
-  function connect() {
-    if (linkQueue.length < 2) {
-      note("Drag from a node's right port to another node's left port.");
-      return;
-    }
-    finishLink(linkQueue[0], linkQueue[1]);
   }
 
   // ------------------------------------------------------------- inspector
@@ -1434,7 +1419,6 @@
     graph.nodes.push(fresh);
     selected = id;
     selectedEdge = null;
-    linkQueue = [id];
     setInspector(true);
     buildInspector();
     draw();
@@ -1491,7 +1475,6 @@
     layout();
     selected = null;
     selectedEdge = null;
-    linkQueue = [];
     linkArm = null;
     setInspector(false);
     document.getElementById("name").value = graph.name;
@@ -1523,7 +1506,6 @@
     document.getElementById("validate").title = TIPS["bar.validate"];
     document.getElementById("copy").title = "Copy this graph's designer JSON to the clipboard.";
     document.getElementById("load").title = "Load the bundled hello-world example graph.";
-    document.getElementById("connect").title = TIPS["bar.connect"];
     document.getElementById("save").title = "Hand the designer JSON to Hermes as a workflow save message.";
     document.getElementById("load").addEventListener("click", loadExample);
     document.getElementById("save").addEventListener("click", saveToHermes);

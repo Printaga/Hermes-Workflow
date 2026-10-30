@@ -90,6 +90,17 @@ def test_the_canvas_keeps_its_band_when_a_node_is_selected(canvas):
     )
 
 
+# --------------------------------------------------------------- edge creation
+def test_no_canvas_offers_a_connect_button(canvas):
+    name, source = canvas
+    # An edge is made by dragging one port to another. The button only ever joined the two
+    # most recently clicked nodes, so it connected the wrong pair as often as the right one —
+    # a second, worse way to do the one thing the canvas already does.
+    assert 'data-vw="connect"' not in source, f"{name} still renders a Connect button"
+    assert 'id="connect"' not in source, f"{name} still renders a Connect button"
+    assert '"bar.connect"' not in source, f"{name} still explains a Connect button"
+
+
 @pytest.mark.parametrize("name", ["dashboard", "desktop"])
 def test_the_collapsed_inspector_does_not_ask_for_a_percentage_height(name):
     source = CANVASES[name].read_text(encoding="utf-8")

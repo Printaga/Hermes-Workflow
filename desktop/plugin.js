@@ -71,7 +71,6 @@ const TIPS = {
   "bar.validate": "Check the graph without saving it.",
   "bar.save": "Validate and store the workflow.",
   "bar.run": "Run it now: advance until it finishes or pauses at a gate.",
-  "bar.connect": "Connect the two most recently clicked nodes (parent first).",
   "bar.delete": "Delete the selected node, or cut the selected edge.",
   "presets.daily": "Runs once every day at the time you pick.",
   "presets.weekdays": "Runs Monday to Friday at the time you pick.",
@@ -358,7 +357,6 @@ const TEMPLATE =
   '      <button class="vw-pill" type="button" data-vw="validate">Validate</button>' +
   '      <button class="vw-pill" type="button" data-vw="save">Save</button>' +
   '      <button class="vw-pill" type="button" data-vw="run-now">Run</button>' +
-  '      <button class="vw-pill" type="button" data-vw="connect">Connect</button>' +
   '      <button class="vw-pill" type="button" data-vw="delete">Delete</button>' +
   '      <span class="vw-muted" data-vw="status"></span>' +
   "    </div>" +
@@ -458,10 +456,10 @@ function createDesigner(host, call) {
   let active = "";
   let selected = null;
   let selectedEdge = null;
-  let linkQueue = [];
   let linkArm = null;   // source node id after a click on an output port
   let dragLink = null;  // live drag from an output port: {from, x1, y1, x2, y2}
   let profiles = [];    // host profiles ("bots") offered to agent nodes
+  let models = [];      // host model catalog: [{slug, label, models}]
   let channels = [];    // delivery targets ("chats") offered to output nodes
   let lastRun = null;
   let savedNames = [];  // names known to exist server-side; Run refuses a draft instead of 404ing
@@ -605,7 +603,6 @@ function createDesigner(host, call) {
 
     graph.nodes.forEach((n) => {
       const isSelected = n.id === selected;
-      const queued = linkQueue.indexOf(n.id) >= 0;
       const g = svgEl("g", {
         transform: "translate(" + n.x + "," + n.y + ")",
         class: "vw-node",
@@ -619,7 +616,7 @@ function createDesigner(host, call) {
       const box = {
         width: NODE_W, height: NODE_H, rx: 6,
         fill: isNote ? "var(--vw-note-" + noteColor(n) + ")" : "var(--vw-node)",
-        stroke: isSelected || queued ? "var(--vw-accent)" : "var(--vw-line)",
+        stroke: isSelected ? "var(--vw-accent)" : "var(--vw-line)",
         "stroke-width": isSelected ? 2 : 1,
       };
       // A dashed edge is the cheapest "this is paper, not a step" cue that survives theming.
@@ -718,9 +715,6 @@ function createDesigner(host, call) {
     selected = id;
     selectedEdge = null;
     setInspector(true);
-    // The queue is "the two most recently clicked nodes", parent first. Clicking a node
-    // again must not drop it (that would make click-click-Connect impossible).
-    linkQueue = linkQueue.filter((x) => x !== id).concat([id]).slice(-2);
     buildInspector();
     draw();
   }
@@ -830,14 +824,6 @@ function createDesigner(host, call) {
     buildInspector();
   }
 
-  function connect() {
-    if (linkQueue.length < 2) {
-      note("Drag from a node's right port to another node's left port.");
-      return;
-    }
-    finishLink(linkQueue[0], linkQueue[1]);
-  }
-
   function removeSelected() {
     if (selectedEdge) {
       const parts = selectedEdge.split(">");
@@ -855,7 +841,6 @@ function createDesigner(host, call) {
     });
     selected = null;
     selectedEdge = null;
-    linkQueue = [];
     linkArm = null;
     buildInspector();
     draw();
@@ -1392,7 +1377,6 @@ function createDesigner(host, call) {
     graph.nodes.push(fresh);
     selected = id;
     selectedEdge = null;
-    linkQueue = [id];
     setInspector(true);
     buildInspector();
     draw();
@@ -2129,7 +2113,6 @@ function createDesigner(host, call) {
     q('[data-vw="validate"]').title = TIPS["bar.validate"];
     q('[data-vw="save"]').title = TIPS["bar.save"];
     q('[data-vw="run-now"]').title = TIPS["bar.run"];
-    q('[data-vw="connect"]').title = TIPS["bar.connect"];
     q('[data-vw="delete"]').title = TIPS["bar.delete"];
     q('[data-vw="view-designer"]').title = "Edit the workflow on the canvas.";
     q('[data-vw="view-runs"]').title = "Every run saved on this machine, with any waiting gate answerable here.";
@@ -2140,7 +2123,6 @@ function createDesigner(host, call) {
     q('[data-vw="validate"]').addEventListener("click", validateDraft);
     q('[data-vw="save"]').addEventListener("click", saveDesign);
     q('[data-vw="run-now"]').addEventListener("click", runDesign);
-    q('[data-vw="connect"]').addEventListener("click", connect);
     q('[data-vw="delete"]').addEventListener("click", removeSelected);
     q('[data-vw="insp-toggle"]').addEventListener("click", () => {
       setInspector(el.app.classList.contains("vw-insp-collapsed"));
@@ -2192,7 +2174,6 @@ function createDesigner(host, call) {
     if (!graph.name) graph.name = "untitled";
     selected = null;
     selectedEdge = null;
-    linkQueue = [];
     linkArm = null;
     dragLink = null;
     lastRun = null;
