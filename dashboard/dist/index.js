@@ -68,7 +68,6 @@
     "agent.prompt": "What this step should do; the reply becomes out.<node>.text for later steps.",
     "agent.profile": "Which bot runs the step; host default uses the bot you have active.",
     "agent.model": "Model override for this step only; empty keeps the bot's own model.",
-    "agent.provider": "Provider override for this step only; empty keeps the bot's own provider.",
     "agent.retries": "How many extra tries the step gets when the bot fails before the run gives up (0 to 3).",
     "condition.expression": "A test like out.draft.word_count > 20 \u2014 start with out.<node>.<field>, then one of > >= < <= == !=.",
     "approval.question": "The question the person sees; the run waits here until they answer.",
@@ -888,6 +887,7 @@
     /** Host profiles ("bots") as ``[{name, label, model, provider}]``; empty when the
      *  backend could not list them, in which case the picker degrades to a placeholder. */
     var profiles = options.profiles || [];
+    var models = options.models || [];
 
     function profileByName(name) {
       if (!name) return null;
@@ -930,6 +930,57 @@
         if (select.value) current.profile = select.value;
         else delete current.profile;
         buildInspector();
+        draw();
+      });
+      return select;
+    }
+
+    /** The host catalog as a grouped <select>: one optgroup per provider, because a step names
+     *  exactly one model and the runtime derives its provider. With no catalog the field stays
+     *  typeable, and a saved model the catalog dropped stays selectable. */
+    function modelSelect(current) {
+      if (!models.length) {
+        return textInput(current.model || "", function (v) {
+          if (v) current.model = v;
+          else delete current.model;
+        }, "model id (optional)");
+      }
+      var select = document.createElement("select");
+      select.title = TIPS["agent.model"];
+      var blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = "\u2014 the bot's own model \u2014";
+      blank.title = TIPS["agent.model"];
+      select.appendChild(blank);
+      var known = false;
+      models.forEach(function (p) {
+        var group = document.createElement("optgroup");
+        group.label = p.label || p.slug;
+        (p.models || []).forEach(function (id) {
+          var option = document.createElement("option");
+          option.value = id;
+          option.textContent = id;
+          option.title = TIPS["agent.model"];
+          if (id === current.model) {
+            option.selected = true;
+            known = true;
+          }
+          group.appendChild(option);
+        });
+        if (group.children.length) select.appendChild(group);
+      });
+      if (current.model && !known) {
+        // A saved design can name a model this host no longer lists: keep it visible so
+        // opening the inspector cannot silently retarget the step.
+        var stale = document.createElement("option");
+        stale.value = current.model;
+        stale.textContent = current.model + " (not listed)";
+        stale.selected = true;
+        select.appendChild(stale);
+      }
+      select.addEventListener("change", function () {
+        if (select.value) current.model = select.value;
+        else delete current.model;
         draw();
       });
       return select;
@@ -1202,17 +1253,11 @@
         if (chosen) {
           var runs = document.createElement("p");
           runs.className = "vw-hint";
-          runs.textContent = "runs as " + (chosen.label || chosen.name) +
-            (chosen.model ? " \u00b7 " + chosen.model : "") +
-            (chosen.provider ? " / " + chosen.provider : "");
+        runs.textContent = "runs as " + (chosen.label || chosen.name) +
+          (chosen.model ? " \u00b7 " + chosen.model : "");
           box.appendChild(runs);
         }
-        box.appendChild(field("model (optional)", textInput(current.model || "", function (v) {
-          current.model = v;
-        }), TIPS["agent.model"]));
-        box.appendChild(field("provider (optional)", textInput(current.provider || "", function (v) {
-          current.provider = v;
-        }), TIPS["agent.provider"]));
+        box.appendChild(field("model (optional)", modelSelect(current), TIPS["agent.model"]));
         box.appendChild(field("retries (optional)", textInput(
           current.retries ? String(current.retries) : "",
           function (v) {
@@ -1742,6 +1787,11 @@
         profiles = Array.isArray(list) ? list : [];
         buildInspector();
       },
+      /** Replace the model catalog the agent inspector offers. */
+      setModels: function (list) {
+        models = Array.isArray(list) ? list : [];
+        buildInspector();
+      },
       /** Replace the delivery targets the output inspector offers. */
       setChannels: function (list) {
         channels = Array.isArray(list) ? list : [];
@@ -2045,13 +2095,23 @@
       });
     }, []);
 
-    // Profiles ("bots") are listed once per mount; a failure is not fatal — the picker
-    // simply has nothing to offer and the free-text model/provider fields still work.
+    // Profiles ("bots") and the model catalog are listed once per mount; a failure is not
+    // fatal — the agent picker has nothing to offer and the model field stays typeable.
     var loadProfiles = useCallback(function () {
       return fetchJSON(API + "/profiles").then(function (data) {
         if (designerRef.current) designerRef.current.setProfiles((data && data.profiles) || []);
       }).catch(function () {
         if (designerRef.current) designerRef.current.setProfiles([]);
+      });
+    }, []);
+
+    // The host catalog behind the model dropdown: providers with their model ids. An empty
+    // answer (no host package) leaves the agent node's model field a free-text input.
+    var loadModels = useCallback(function () {
+      return fetchJSON(API + "/models").then(function (data) {
+        if (designerRef.current) designerRef.current.setModels((data && data.providers) || []);
+      }).catch(function () {
+        if (designerRef.current) designerRef.current.setModels([]);
       });
     }, []);
 
@@ -2084,11 +2144,12 @@
       refresh();
       loadTemplates();
       loadProfiles();
+      loadModels();
       loadChannels();
       return function () {
         designerRef.current = null;
       };
-    }, [refresh, loadTemplates, loadProfiles, loadChannels]);
+    }, [refresh, loadTemplates, loadProfiles, loadModels, loadChannels]);
 
     function open(name) {
       setActive(name);

@@ -101,6 +101,47 @@ def test_no_canvas_offers_a_connect_button(canvas):
     assert '"bar.connect"' not in source, f"{name} still explains a Connect button"
 
 
+# -------------------------------------------------------------- the model picker
+def body_of(source: str, name: str) -> str:
+    """The `function <name>(...) { … }` block, matched by brace depth."""
+    start = re.search(r"function " + re.escape(name) + r"\([^)]*\) \{", source)
+    assert start, f"no function {name}()"
+    depth = 0
+    for index in range(start.end() - 1, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start.end():index]
+    raise AssertionError(f"{name}() is not closed")
+
+
+def test_an_agent_node_has_no_provider_field(canvas):
+    name, source = canvas
+    # A step names a model; the runtime derives the provider from the host catalog, so an
+    # editable provider is a field that can only disagree with what actually runs.
+    assert '"agent.provider"' not in source, f"{name} still explains a provider field"
+    assert '"provider (optional)"' not in source, f"{name} still renders a provider field"
+    assert "current.provider" not in source, f"{name} still writes a provider onto the node"
+
+
+def test_the_model_picker_is_a_select_over_the_host_catalog(canvas):
+    name, source = canvas
+    assert re.search(r"/models\b", source), (
+        f"{name} never asks the backend for the host's models"
+    )
+    body = body_of(source, "modelSelect")
+    assert 'createElement("select")' in body, f"{name} model picker is not a select"
+    assert 'createElement("optgroup")' in body, f"{name} model picker does not group by provider"
+    # No catalog (a bare file:// preview, or a host without one) must stay typeable instead of
+    # rendering an empty control.
+    assert "textInput(" in body, f"{name} model picker has no free-text fallback"
+    # A saved model the catalog no longer lists stays visible rather than being reset silently.
+    assert "not listed" in body, f"{name} drops a model the catalog does not list"
+
+
 @pytest.mark.parametrize("name", ["dashboard", "desktop"])
 def test_the_collapsed_inspector_does_not_ask_for_a_percentage_height(name):
     source = CANVASES[name].read_text(encoding="utf-8")

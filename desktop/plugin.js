@@ -52,7 +52,7 @@ const TIPS = {
   "trigger.schedule": "The cron expression actually saved: minute hour day-of-month month weekday \u2014 0 9 * * 1-5 is 09:00 Monday to Friday.",
   "agent.prompt": "What this step should do; the reply becomes out.<node>.text for later steps.",
   "agent.profile": "Which bot runs the step; host default uses the bot you have active.",
-  "agent.model": "Model override for this step only; empty keeps the bot's own model.",    "agent.provider": "Provider override for this step only; empty keeps the bot's own provider.",
+  "agent.model": "Model override for this step only; empty keeps the bot's own model.",
     "agent.retries": "How many extra tries the step gets when the bot fails before the run gives up (0 to 3).",
   "condition.expression": "A test like out.draft.word_count > 20 \u2014 start with out.<node>.<field>, then one of > >= < <= == !=.",
   "approval.question": "The question the person sees; the run waits here until they answer.",
@@ -929,6 +929,57 @@ function createDesigner(host, call) {
     return select;
   }
 
+  /** The host catalog as a grouped <select>: one optgroup per provider, because a step names
+   *  exactly one model and the runtime derives its provider. With no catalog the field stays
+   *  typeable, and a saved model the catalog dropped stays selectable. */
+  function modelSelect(current) {
+    if (!models.length) {
+      return textInput(current.model || "", (v) => {
+        if (v) current.model = v;
+        else delete current.model;
+      }, "model id (optional)");
+    }
+    const select = document.createElement("select");
+    select.title = TIPS["agent.model"];
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "\u2014 the bot's own model \u2014";
+    blank.title = TIPS["agent.model"];
+    select.appendChild(blank);
+    let known = false;
+    models.forEach((p) => {
+      const group = document.createElement("optgroup");
+      group.label = p.label || p.slug;
+      (p.models || []).forEach((id) => {
+        const option = document.createElement("option");
+        option.value = id;
+        option.textContent = id;
+        option.title = TIPS["agent.model"];
+        if (id === current.model) {
+          option.selected = true;
+          known = true;
+        }
+        group.appendChild(option);
+      });
+      if (group.children.length) select.appendChild(group);
+    });
+    if (current.model && !known) {
+      // A saved design can name a model this host no longer lists: keep it visible so opening
+      // the inspector cannot silently retarget the step.
+      const stale = document.createElement("option");
+      stale.value = current.model;
+      stale.textContent = current.model + " (not listed)";
+      stale.selected = true;
+      select.appendChild(stale);
+    }
+    select.addEventListener("change", () => {
+      if (select.value) current.model = select.value;
+      else delete current.model;
+      draw();
+    });
+    return select;
+  }
+
   /** Chats the host gateway has seen (``GET /channels``); empty means the canvas offers a
    *  free-text field instead of a picker that cannot fill. */
   function channelSelect(current) {
@@ -1189,16 +1240,10 @@ function createDesigner(host, call) {
         const runs = document.createElement("p");
         runs.className = "vw-hint";
         runs.textContent = "runs as " + (chosen.label || chosen.name) +
-          (chosen.model ? " \u00b7 " + chosen.model : "") +
-          (chosen.provider ? " / " + chosen.provider : "");
+          (chosen.model ? " \u00b7 " + chosen.model : "");
         box.appendChild(runs);
       }
-      box.appendChild(field("model (optional)", textInput(current.model || "", (v) => {
-        current.model = v;
-      }), TIPS["agent.model"]));
-      box.appendChild(field("provider (optional)", textInput(current.provider || "", (v) => {
-        current.provider = v;
-      }), TIPS["agent.provider"]));
+      box.appendChild(field("model (optional)", modelSelect(current), TIPS["agent.model"]));
       box.appendChild(field("retries (optional)", textInput(
         current.retries ? String(current.retries) : "",
         (v) => {
@@ -1421,13 +1466,24 @@ function createDesigner(host, call) {
   }
 
   /** Profiles ("bots") for the agent picker. A failure is not fatal: the picker just offers
-   *  nothing and the free-text model/provider fields still work. */
+   *  nothing and the model field stays typeable. */
   function refreshProfiles() {
     return call("/profiles").then((data) => {
       profiles = (data && data.profiles) || [];
       buildInspector();
     }).catch(() => {
       profiles = [];
+    });
+  }
+
+  /** The host catalog behind the model dropdown. A failure is not fatal either: an empty list
+   *  leaves the agent node's model field a free-text input. */
+  function refreshModels() {
+    return call("/models").then((data) => {
+      models = (data && data.providers) || [];
+      buildInspector();
+    }).catch(() => {
+      models = [];
     });
   }
 
@@ -2201,6 +2257,7 @@ function createDesigner(host, call) {
   refreshDesigns();
   refreshTemplates();
   refreshProfiles();
+  refreshModels();
   refreshChannels();
 
   return { loadGraph: loadGraph, getGraph: payloadGraph };
