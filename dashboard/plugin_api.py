@@ -4,9 +4,11 @@ Thin wrappers over the plugin's own ``store`` / ``convert`` / ``runner`` modules
 code paths ``/workflow`` and the ``workflow_design_*`` tools use, so the GUI tab and the chat
 surface cannot drift.
 
-Agent steps are never executed here: the web server has no subagent backend, so
-``run_plan(..., spawn=None)`` parks the run at ``awaiting_agent`` and the dashboard answers it
-through ``POST /runs/{run_id}/respond``.
+Agent steps run through the host's plugin LLM facade (``PluginLlm`` — ``visual_workflow_hermes/spawn.py``):
+it needs no parent-agent session, which the web server can never have, so a manual **Run** executes
+instead of parking at ``awaiting_agent``. Model overrides are trust-gated by
+``plugins.entries.visual-workflow.llm.allow_model_override``; when the host is not importable the
+routes fall back to ``spawn=None`` and park at ``awaiting_agent`` as before.
 """
 from __future__ import annotations
 
@@ -43,6 +45,7 @@ from visual_workflow_hermes.schedule import (  # noqa: E402
     schedule_design,
 )
 from visual_workflow_hermes.schema import validate_designer_graph  # noqa: E402
+from visual_workflow_hermes.spawn import llm_spawn  # noqa: E402
 from visual_workflow_hermes.store import DesignStore, RunStore  # noqa: E402
 
 router = APIRouter()
@@ -248,7 +251,7 @@ def run_design(name: str) -> dict:
     runs = _runs()
     state = new_state(plan, run_id)
     runs.save(state)
-    state = run_plan(plan, state, spawn=None, on_step=runs.save, deliver=deliver_output)
+    state = run_plan(plan, state, spawn=llm_spawn(), on_step=runs.save, deliver=deliver_output)
     return _result(state)
 
 
@@ -362,7 +365,7 @@ def respond_run(run_id: str, payload: dict = Body(...)) -> dict:
         )
     try:
         plan = build_run_plan(_load_design(state["name"]))
-        state = resume_plan(plan, state, answer, spawn=None, on_step=runs.save,
+        state = resume_plan(plan, state, answer, spawn=llm_spawn(), on_step=runs.save,
                             deliver=deliver_output)
     except (StepError, ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

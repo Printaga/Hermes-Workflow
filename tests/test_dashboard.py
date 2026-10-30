@@ -15,6 +15,7 @@ import ast
 import json
 import re
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -397,6 +398,87 @@ def test_run_through_the_router_returns_the_delivery_record(tmp_path, monkeypatc
     (record,) = done["deliveries"]
     assert record["node_id"] == "out" and record["ok"] is False
     assert record["target"] == "telegram"
+
+
+def test_run_route_executes_agent_steps_through_a_host_llm(tmp_path, monkeypatch):
+    """A canvas Run advances through an agent node instead of parking at ``awaiting_agent``.
+
+    The route reaches the host ``PluginLlm`` facade through ``llm_spawn``; this test injects a
+    fake facade via the same import the route reads, exactly as the host mounts it.
+    """
+    from visual_workflow_hermes.spawn import _make_spawn
+
+    client, mod = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr(mod, "llm_spawn",
+                        lambda: _make_spawn(_FakeCompleteLlm(text="haiku, two lines.")))
+    graph = {
+        "name": "spawned",
+        "nodes": [
+            {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+            {"id": "write", "type": "agent", "prompt": "Write a two-line haiku.",
+             "after": ["t"]},
+            {"id": "out", "type": "output", "after": ["write"]},
+        ],
+    }
+    saved = client.post("/api/plugins/visual-workflow/designs/spawned",
+                        json={"graph": graph}).json()
+    assert saved["ok"] is True
+    run = client.post("/api/plugins/visual-workflow/designs/spawned/run").json()
+    assert run["status"] == "done", run
+    assert run["outputs"]["write"] == "haiku, two lines."
+    assert run["outputs"]["out"] == {"write": "haiku, two lines."}
+    assert run["pending"] is None
+
+
+def test_respond_route_runs_the_remaining_agent_step_with_a_host_llm(tmp_path, monkeypatch):
+    """A run parked on an agent node (no LLM at the time) can be resumed into a working spawn.
+
+    Covering the respond route matters because it shares the spawn decision the run route made:
+    without it a resumed run would park again at the very next agent node.
+    """
+    from visual_workflow_hermes.spawn import _make_spawn
+
+    client, mod = _client(tmp_path, monkeypatch)
+    graph = {
+        "name": "later",
+        "nodes": [
+            {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+            {"id": "one", "type": "agent", "prompt": "first", "after": ["t"]},
+            {"id": "two", "type": "agent", "prompt": "second", "after": ["one"]},
+            {"id": "out", "type": "output", "after": ["two"]},
+        ],
+    }
+    saved = client.post("/api/plugins/visual-workflow/designs/later",
+                        json={"graph": graph}).json()
+    assert saved["ok"] is True
+
+    # First run: no LLM backend (the old status quo) parks at the first agent node.
+    monkeypatch.setattr(mod, "llm_spawn", lambda: None)
+    parked = client.post("/api/plugins/visual-workflow/designs/later/run").json()
+    assert parked["status"] == "awaiting_agent"
+
+    # Resume: the backend comes back, and the run finishes rather than pausing again.
+    monkeypatch.setattr(mod, "llm_spawn",
+                        lambda: _make_spawn(_FakeCompleteLlm(text="done by the llm")))
+    done = client.post(
+        f"/api/plugins/visual-workflow/runs/{parked['run_id']}/respond",
+        json={"run_id": parked["run_id"], "node_id": "one", "answer": "first result"},
+    ).json()
+    assert done["status"] == "done", done
+    assert done["outputs"]["two"] == "done by the llm"
+
+
+class _FakeCompleteLlm:
+    """Minimal ``PluginLlm`` stand-in for route tests: records to nothing, answers with text."""
+
+    def __init__(self, *, text: str):
+        self.text = text
+
+    def complete(self, **kwargs):
+        return types.SimpleNamespace(text=self.text)
+
+    def complete_structured(self, **kwargs):
+        return types.SimpleNamespace(text=self.text, parsed=None)
 
 
 # ------------------------------------------------------------------------ entry
