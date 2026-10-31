@@ -1,0 +1,1561 @@
+{
+  "status": "success",
+  "llm": {
+    "provider": "opencode-go",
+    "model": "muse-spark-1.3-contributor"
+  },
+  "summary": {
+    "files_reviewed": 50,
+    "comments": 153,
+    "total_tokens": 1841421,
+    "input_tokens": 1400457,
+    "output_tokens": 440964,
+    "cache_read_tokens": 909878,
+    "elapsed": "5m31s"
+  },
+  "tool_calls": {
+    "total": 121,
+    "by_tool": {
+      "code_comment": 49,
+      "code_search": 24,
+      "file_find": 19,
+      "file_read": 29
+    },
+    "failure": 0,
+    "failure_by_tool": {},
+    "failure_details": []
+  },
+  "comments": [
+    {
+      "path": "widgets/designer.html",
+      "content": "Edge identity collides when an id contains `\u003e`. `edgeKey(from,to)` joins with `\u003e` and `removeSelected`/delete/double-click paths later do `split(\"\u003e\")` and take `parts[0]/parts[1]`, so `a\u003eb -\u003e c` and `a -\u003e b\u003ec` produce the same key and `split` yields 3+ parts truncated to the wrong pair/`undefined`. Loaded/saved graphs are not constrained to forbid `\u003e` in ids, so select/cut/delete can hit the wrong edge. Use an identity that cannot collide (e.g. store {from,to} object/array, or encode with JSON + validated delimiter) with no string split, and validate/reject `\u003e` in node ids.",
+      "suggestion_code": "function edgeKey(from, to) { return JSON.stringify([from, to]); }\n// and in removeSelected: var parts = JSON.parse(selectedEdge); cutEdge(parts[0], parts[1]);\n// plus validator: reject ids containing '\u003e' or whitespace.",
+      "existing_code": "function edgeKey(from, to) { return from + \"\u003e\" + to; }",
+      "start_line": 365,
+      "end_line": 365,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "widgets/designer.html",
+      "content": "`cronFieldOk` accepts extra `/` segments: it does `part.split(\"/\")` then only checks `step[1]`, ignoring `step[2..]`. So `*/15/2`, `5/10/extra`, `*/15/` pass as `*`/`5` and a bad schedule is saved. Require exactly 2 segments and a valid base (`*` or range/single).",
+      "suggestion_code": "      if (part.indexOf(\"/\") \u003e= 0) {\n        var step = part.split(\"/\");\n        if (step.length !== 2) { return false; }\n        part = step[0];\n        if (!/^\\d+$/.test(step[1] || \"\") || parseInt(step[1], 10) \u003c 1) { return false; }\n        if (part !== \"*\" \u0026\u0026 part.indexOf(\"-\") \u003c 0 \u0026\u0026 !/^\\d+$/.test(part)) { return false; }\n      }",
+      "existing_code": "      if (part.indexOf(\"/\") \u003e= 0) {\n        var step = part.split(\"/\");\n        part = step[0];\n        if (!/^\\d+$/.test(step[1] || \"\") || parseInt(step[1], 10) \u003c 1) { return false; }\n      }",
+      "start_line": 275,
+      "end_line": 279,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "widgets/designer.html",
+      "content": "`validateNow` falls back to local `validateGraph` on any `catch`, including a server 500/non-JSON body or `res.json()` parse failure. A backend failure is then misreported as a local verdict (\"valid\"/\"N problems\") instead of an error. Only fall back on network/TypeError when no HTTP response was received; surface HTTP + parse errors as `Validate failed`.",
+      "suggestion_code": "    }).catch(function (err) {\n      if (err \u0026\u0026 err.name === 'TypeError') { reportValid(validateGraph(graph)); return; }\n      showErrors([{ node: \"\", field: \"validate\", msg: String((err \u0026\u0026 err.message) || err) }]);\n      banner(\"Validate failed — \" + String((err \u0026\u0026 err.message) || err), \"error\");\n    });",
+      "existing_code": "    }).catch(function () {\n      // No backend (a bare file:// preview): the local validator is the only authority left.\n      reportValid(validateGraph(graph));\n    });",
+      "start_line": 1724,
+      "end_line": 1727,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "widgets/designer.html",
+      "content": "`runDesign` refuses any name absent from `savedNames`, which is fetched only once at load (`refreshDesigns`) and never refreshed after Save or before Run. A newly saved, externally created, or concurrently renamed design is falsely reported as unsaved. Refresh the list before the check (or drop the pre-check and let the POST 404 drive the same banner).",
+      "suggestion_code": "    // re-fetch GET /designs here, then check; or remove gate and handle 404 from POST /run.",
+      "existing_code": "    if (savedNames.indexOf(name) \u003c 0) {\n      showErrors([{ node: \"\", field: \"name\", msg: name + \" is not saved yet\" }]);\n      note(\"not run\");\n      banner(\"“\" + name + \"” is not saved yet — press Save to Hermes, then Run.\", \"error\");\n      return;\n    }",
+      "start_line": 1652,
+      "end_line": 1657,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "widgets/designer.html",
+      "content": "Delete/Backspace guard skips only INPUT/TEXTAREA/SELECT, so with focus on a palette button, banner dismiss, inspector toggle, or run-panel button, pressing Delete/Backspace deletes the selected node/edge unexpectedly. Include BUTTON (and contenteditable) in the guard or require the canvas/window to have focus without a button target.",
+      "suggestion_code": "      if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName || \"\")) { return; }\n      if (target.isContentEditable) { return; }",
+      "existing_code": "    document.addEventListener(\"keydown\", function (ev) {\n      var target = ev.target || {};\n      if (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || \"\")) { return; }",
+      "start_line": 1876,
+      "end_line": 1878,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "widgets/designer.html",
+      "content": "`reportValid` (and several run/validate error paths) share `#errors` for both detail list and one-word status: `showErrors(errors)` writes the list then `note(...)` immediately overwrites it with `\"N problem(s)\"`/`\"valid\"`, and `showErrors(...); note(\"\")` hides the detail entirely. The banner says \"see details below the canvas\" but details are wiped. Use separate elements or do not call `note()` after `showErrors()`.",
+      "suggestion_code": "  function reportValid(errors) {\n    if (!errors.length) { showErrors([]); note(\"valid\"); ... }\n    else { showErrors(errors); /* do not overwrite with note() */ ... }\n  }",
+      "existing_code": "  function reportValid(errors) {\n    showErrors(errors);\n    if (!errors.length) {\n      note(\"valid\");\n      banner(\"Design is valid · \" + graph.nodes.length + \" node(s).\", \"\");\n      return false;\n    }\n    note(errors.length + \" problem(s)\");",
+      "start_line": 1360,
+      "end_line": 1367,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "widgets/designer.html",
+      "content": "Missing tooltip key: `TIPS[\"runs.approve\"]` is undefined (TIPS only defines `runs.resume/agent/retry`). Assigning it to `pick.title` renders as literal \"undefined\" tooltip on approval-option buttons. Should be `TIPS[\"runs.resume\"]` or a new `runs.approve` entry.",
+      "suggestion_code": "          pick.title = TIPS[\"runs.resume\"]; // or add \"runs.approve\" to TIPS",
+      "existing_code": "          var pick = runButton(option, function () { respond(gate.node_id, option); });\n          pick.title = TIPS[\"runs.approve\"];",
+      "start_line": 1450,
+      "end_line": 1451,
+      "category": "bug",
+      "severity": "low"
+    },
+    {
+      "path": "widgets/designer.html",
+      "content": "Async catalog fetches (`refreshProfiles/Models/Channels`) unconditionally call `buildInspector()`, which wipes `#insp-body` and rebuilds controls. If the user is editing (e.g. typing a prompt) when the response lands, focus/cursor/selection is lost. Rebuild only when inspector is empty/closed, or preserve active element + value, or update only the affected control.",
+      "suggestion_code": "      .then(function (data) {\n        profiles = (data \u0026\u0026 data.profiles) || [];\n        if (!selected || document.activeElement === document.body) { buildInspector(); }\n      })",
+      "existing_code": "      .then(function (data) {\n        profiles = (data \u0026\u0026 data.profiles) || [];\n        buildInspector();\n      })",
+      "start_line": 1063,
+      "end_line": 1066,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_item1.js",
+      "content": "Hardcoded credential `probe-token-9119` committed in source. Anyone with repo access can impersonate the probe session. Load from env (process.env.HERMES_PROBE_TOKEN) and fail fast if missing; do not log it.",
+      "suggestion_code": "const TOKEN = process.env.HERMES_PROBE_TOKEN;\nif (!TOKEN) throw new Error('HERMES_PROBE_TOKEN is required');",
+      "existing_code": "const TOKEN = 'probe-token-9119';",
+      "start_line": 10,
+      "end_line": 10,
+      "category": "security",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_item1.js",
+      "content": "Browser is only closed on the happy path. If any await throws (goto, locator, selectOption, evaluate), the `catch` exits without `browser.close()`, leaking the headless Chrome process. Wrap the run in try/finally and always close.",
+      "suggestion_code": "  try {\n    // ... Case A / Case B ...\n    await page.screenshot({ path: '/tmp/item1.png', fullPage: false });\n  } finally {\n    await browser.close().catch(()=\u003e{});\n  }\n})().catch(e =\u003e { console.error('PROBE FAILED', e); process.exit(1); });",
+      "existing_code": "  await page.screenshot({ path: '/tmp/item1.png', fullPage: false });\n  await browser.close();\n})().catch(e =\u003e { console.error('PROBE FAILED', e); process.exit(1); });",
+      "start_line": 68,
+      "end_line": 70,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_shell.js",
+      "content": "Machine-specific absolute require path breaks portability (only works on one user/host). Use normal package resolution `require('playwright')` / `require('playwright-core')` with dependency in package.json.",
+      "suggestion_code": "const { chromium } = require('playwright');",
+      "existing_code": "const { chromium } = require('/home/lenovo/.hermes/hermes-agent/node_modules/playwright');",
+      "start_line": 1,
+      "end_line": 1,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_chain.js",
+      "content": "Hardcoded `executablePath: '/usr/bin/google-chrome'` breaks portability (macOS/CI/Windows, different distros) and bypasses Playwright's version-pinned browser. Let Playwright pick its bundled Chromium, or make it an env override.",
+      "suggestion_code": "const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });",
+      "existing_code": "const browser = await chromium.launch({ headless: true, executablePath: '/usr/bin/google-chrome' });",
+      "start_line": 31,
+      "end_line": 31,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_shell.js",
+      "content": "waitUntil:'networkidle' is unreliable for SPA/long-polling pages (can hang until timeout or return early). Prefer 'domcontentloaded' + explicit waitForSelector/waitForFunction for .vw-shell/canvas readiness.",
+      "suggestion_code": "  await page.goto(BASE + '/workflows', { waitUntil: 'domcontentloaded' });\n  await page.waitForSelector('.vw-shell');",
+      "existing_code": "  await page.goto(BASE + '/workflows', { waitUntil: 'networkidle' });",
+      "start_line": 26,
+      "end_line": 26,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_shell.js",
+      "content": "click({force:true}) bypasses actionability checks (visible/stable/receives events), so probe can pass while canvas node is actually unclickable/covered — masks the UI breakage this probe is meant to catch. Remove `force:true`, explicitly wait for the node, and let failure surface.",
+      "suggestion_code": "  const node = page.locator('[data-vw=\"canvas\"] g').filter({ has: page.locator('rect') }).first();\n  await node.waitFor({ state: 'visible' });\n  await node.click();",
+      "existing_code": "  await page.locator('[data-vw=\"canvas\"] g').filter({ has: page.locator('rect') }).first().click({ force: true });",
+      "start_line": 29,
+      "end_line": 29,
+      "category": "test",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_layout.js",
+      "content": "Hardcoded `/tmp` screenshot paths are non-portable (Windows, sandboxed CI) and overwrite on every run, losing history and racing if probes run in parallel. Make output dir/file configurable.",
+      "suggestion_code": "  const outDir = process.env.PROBE_OUTDIR || '/tmp';\n  await page.screenshot({ path: require('path').join(outDir, `layout-before-${Date.now()}.png`) });",
+      "existing_code": "  await page.screenshot({ path: '/tmp/layout-before.png' });",
+      "start_line": 54,
+      "end_line": 54,
+      "category": "maintainability",
+      "severity": "low"
+    },
+    {
+      "path": ".hermes/probe_chain.js",
+      "content": "Hardcoded fallback credential `probe-token-9119`. If `TOK` is unset the script silently uses a real-looking session token and then exposes it to the page via `addInitScript`, leaking it to any JS/context on the page and to logs/artifacts. Fail fast instead of defaulting.",
+      "suggestion_code": "const BASE = process.env.BASE || 'http://127.0.0.1:9119';\nconst TOKEN = process.env.TOK;\nif (!TOKEN) { console.error('Missing required env TOK'); process.exit(1); }",
+      "existing_code": "const BASE = process.env.BASE || 'http://127.0.0.1:9119';\nconst TOKEN = process.env.TOK || 'probe-token-9119';",
+      "start_line": 6,
+      "end_line": 7,
+      "category": "security",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_chain.js",
+      "content": "Silent false-positive when `.vw-app` is absent: `chain` returns `[]`, so both BEFORE/AFTER loops print nothing and the probe exits 0, masking a load/auth failure. Assert the chain is non-empty.",
+      "suggestion_code": "  let el = document.querySelector('.vw-app');\n  if (!el) throw new Error('.vw-app not found — page failed to load or auth failed');",
+      "existing_code": "  let el = document.querySelector('.vw-app');",
+      "start_line": 10,
+      "end_line": 10,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_item1.js",
+      "content": "Fixed sleeps (1000/1500/1200/4000) make the banner verdict timing-sensitive and flaky. A slow backend or networkidle delay can misclassify Case A/B. Wait for explicit conditions (banner text change, run output, specific API response) instead of waitForTimeout.",
+      "suggestion_code": "  await page.locator('[data-vw=\"run-now\"]').click();\n  await page.locator('[data-vw=\"banner\"]:not(:empty)').waitFor({ timeout: 10000 });",
+      "existing_code": "  await page.locator('[data-vw=\"run-now\"]').click();\n  await page.waitForTimeout(1500);",
+      "start_line": 45,
+      "end_line": 46,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_item1.js",
+      "content": "Resetting shared `network` via `network.length = 0` races with the async `page.on('response')` handler. In-flight responses from Case A can arrive after the reset and be misattributed to Case B (or lost), corrupting the no-404-POST vs reached-backend assertion.",
+      "suggestion_code": "  // Use per-case capture: record {time, status, method, url} synchronously,\n  // read body lazily, and filter by timestamp instead of network.length = 0.\n  // e.g. const mark = Date.now(); ... network.filter(e =\u003e e.t \u003e= mark)",
+      "existing_code": "  page.on('response', async r =\u003e {",
+      "start_line": 26,
+      "end_line": 26,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_item1.js",
+      "content": "Absolute, machine-specific paths (`/home/lenovo/.../playwright`, `/usr/bin/google-chrome`, `/tmp/item1.png`) and hardcoded `BASE` break portability on any other host/CI. Resolve playwright via normal require, make executablePath/BASE/screenshot path configurable via env with defaults.",
+      "suggestion_code": "const { chromium } = require('playwright');\nconst BASE = process.env.HERMES_BASE ?? 'http://127.0.0.1:9119';\n// const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_PATH });",
+      "existing_code": "const { chromium } = require('/home/lenovo/.hermes/hermes-agent/node_modules/playwright');",
+      "start_line": 7,
+      "end_line": 7,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_bisect.js",
+      "content": "Hardcoded absolute require path, BASE URL and executablePath break portability and violate hardcoding rule. The absolute `require('/home/lenovo/...')` only works on one machine; same for `BASE='http://127.0.0.1:9119'` and `executablePath='/usr/bin/google-chrome'`. Use bare `require('playwright')` (or env-resolved path) and env vars / CLI args for BASE and executable path with fallbacks.",
+      "suggestion_code": "const { chromium } = require('playwright');\nconst BASE = process.env.PROBE_BASE || 'http://127.0.0.1:9119';\n// const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_PATH }); // or omit executablePath to use bundled chromium",
+      "existing_code": "const { chromium } = require('/home/lenovo/.hermes/hermes-agent/node_modules/playwright');",
+      "start_line": 2,
+      "end_line": 2,
+      "category": "maintainability",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_bisect.js",
+      "content": "Missing null checks in page.evaluate: .vw-main/.vw-wrap/.vw-inspector/.vw-app are dereferenced without guards. If any selector is absent (route change, CSS rename, load failure), `main.getBoundingClientRect()` throws inside evaluate and the probe fails opaquely.",
+      "suggestion_code": "    const main = document.querySelector('.vw-main');\n    const wrap = document.querySelector('.vw-wrap');\n    const insp = document.querySelector('.vw-inspector');\n    const app = document.querySelector('.vw-app');\n    if (!main || !wrap || !insp || !app) throw new Error('missing probe selectors: ' + JSON.stringify({ hasMain: !!main, hasWrap: !!wrap, hasInsp: !!insp, hasApp: !!app }));",
+      "existing_code": "    const main = document.querySelector('.vw-main');\n    const wrap = document.querySelector('.vw-wrap');\n    const insp = document.querySelector('.vw-inspector');",
+      "start_line": 15,
+      "end_line": 17,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_bisect.js",
+      "content": "Flaky fixed sleep: waitForTimeout(1200) after networkidle is timing-dependent. Prefer waiting for the actual selector (e.g. waitForSelector('.vw-main')) with a timeout, so the probe is deterministic on slow/fast machines.",
+      "suggestion_code": "  await page.goto(BASE + '/workflows', { waitUntil: 'networkidle' });\n  await page.waitForSelector('.vw-main', { timeout: 10000 });",
+      "existing_code": "  await page.goto(BASE + '/workflows', { waitUntil: 'networkidle' });\n  await page.waitForTimeout(1200);",
+      "start_line": 11,
+      "end_line": 12,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_shell.js",
+      "content": "Hardcoded service URL and browser binary (BASE + executablePath) prevent running on CI/other machines. Parameterize via env/args with defaults, and let Playwright resolve its bundled Chromium unless a custom channel is explicitly required.",
+      "suggestion_code": "const BASE = process.env.PROBE_BASE_URL || 'http://127.0.0.1:9119';",
+      "existing_code": "const BASE = 'http://127.0.0.1:9119';",
+      "start_line": 2,
+      "end_line": 2,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_shell.js",
+      "content": "Fixed sleeps make before/after layout measurements nondeterministic and flaky (races hydration). Replace waitForTimeout(1200/900) with deterministic waits: waitForSelector('.vw-shell'), waitForLoadState + waitForFunction on expected height/canvas readiness.",
+      "suggestion_code": "  await page.waitForSelector('.vw-shell', { state: 'attached' });\n  await page.waitForFunction(() =\u003e document.querySelector('.vw-shell')?.getBoundingClientRect().height \u003e 0);",
+      "existing_code": "  await page.waitForTimeout(1200);",
+      "start_line": 27,
+      "end_line": 27,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_chain.js",
+      "content": "Hardcoded route `/workflows` plus `waitUntil: 'networkidle'` + fixed `waitForTimeout(1200)` is flaky: `networkidle` rarely settles with polling/websockets and the sleep does not guarantee `.vw-app` is rendered. Wait explicitly for the element you measure.",
+      "suggestion_code": "await page.goto(BASE + '/workflows', { waitUntil: 'domcontentloaded' });\n  await page.waitForSelector('.vw-app', { timeout: 15000 });",
+      "existing_code": "await page.goto(BASE + '/workflows', { waitUntil: 'networkidle' });\n  await page.waitForTimeout(1200);",
+      "start_line": 35,
+      "end_line": 36,
+      "category": "other",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_chain.js",
+      "content": "Brittle interaction: `svg g` matches any SVG group (axes, icons, hidden defs), `force: true` bypasses actionability checks (visibility/stability), and fixed `waitForTimeout(900)` makes the before/after height comparison flaky. Scope the selector and wait for a deterministic post-click state.",
+      "suggestion_code": "const node = page.locator('.vw-app svg g.node, .vw-app svg g[data-node-id]').first();\n  await node.waitFor({ state: 'visible', timeout: 15000 });\n  await node.click();\n  await page.waitForFunction(() =\u003e document.querySelector('.vw-app.selected, .vw-app [data-selected=\"true\"]') !== null, null, { timeout: 5000 }).catch(() =\u003e {});",
+      "existing_code": "await page.locator('svg g').first().click({ force: true });\n  await page.waitForTimeout(900);",
+      "start_line": 41,
+      "end_line": 42,
+      "category": "test",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_widget.js",
+      "content": "Machine-specific hardcoded paths break portability. Absolute `require()` path, `file://` WIDGET URL, `executablePath`, and `/tmp` screenshot tie this probe to one workstation. Use bare `require('playwright')`, env vars / CLI args and `path` relative to repo root for WIDGET and screenshot output.",
+      "suggestion_code": "const { chromium } = require('playwright');\nconst path = require('path');\nconst WIDGET = process.env.WIDGET_URL || `file://${path.resolve(__dirname, '../widgets/designer.html')}`;\nconst SCREENSHOT_PATH = process.env.PROBE_SCREENSHOT || path.join(__dirname, '../tmp/widget-after-select.png');",
+      "existing_code": "const { chromium } = require('/home/lenovo/.hermes/hermes-agent/node_modules/playwright');\n\nconst WIDGET = 'file:///home/lenovo/Development/Hermes-Workflow/widgets/designer.html';",
+      "start_line": 2,
+      "end_line": 4,
+      "category": "maintainability",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_widget.js",
+      "content": "Browser leaks on mid-run failure. If any `await` before `browser.close()` throws, the launched Chrome process is never closed, and the outer `.catch(process.exit)` also skips cleanup. Wrap in try/finally and avoid hardcoded `executablePath` (use Playwright default or env override).",
+      "suggestion_code": "  const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_PATH });\n  try {\n    // ... context/page work ...\n  } finally {\n    await browser.close().catch(() =\u003e {});\n  }",
+      "existing_code": "  const browser = await chromium.launch({ headless: true, executablePath: '/usr/bin/google-chrome' });",
+      "start_line": 24,
+      "end_line": 24,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_widget.js",
+      "content": "Fixed sleeps + force-click make before/after metrics flaky and timing-dependent. `waitForTimeout(400)` does not guarantee load/render, and `{force:true}` clicks even hidden/covered nodes, hiding real UI breakage.",
+      "suggestion_code": "  await page.goto(WIDGET, { waitUntil: 'load' });\n  await page.waitForSelector('#canvas g.node');\n  await page.waitForFunction(() =\u003e document.querySelector('#canvas')?.getBoundingClientRect().height \u003e 0);\n  console.log('before', JSON.stringify(await page.evaluate(measure)));\n  await page.locator('#canvas g.node').first().click();\n  await page.waitForFunction((prev) =\u003e document.querySelector('#app')?.className !== prev, await page.evaluate(() =\u003e document.querySelector('#app')?.className));",
+      "existing_code": "  await page.waitForTimeout(400);\n  console.log('before', JSON.stringify(await page.evaluate(measure)));\n  await page.locator('#canvas g.node').first().click({ force: true });\n  await page.waitForTimeout(400);",
+      "start_line": 31,
+      "end_line": 34,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_widget.js",
+      "content": "Silent nulls mask broken widget. `measure()` returns `null` for missing #kit/#canvaswrap/#canvas/#app but caller still logs success + screenshot, so a regressed widget passes unnoticed. Assert selectors exist and fail fast.",
+      "suggestion_code": "  if (!kit || !wrap || !svg || !app) throw new Error(`missing selectors: kit=${!!kit} wrap=${!!wrap} svg=${!!svg} app=${!!app}`);\n  return {\n    app: r(app),\n    kit: r(kit),\n    wrap: r(wrap),\n    svg: r(svg),\n    gapAboveCanvas: +(wrap.getBoundingClientRect().top - kit.getBoundingClientRect().bottom).toFixed(1),\n    appClass: app.className,\n    kitFlex: getComputedStyle(kit).flex,\n  };",
+      "existing_code": "  return {\n    app: r(app),\n    kit: r(kit),\n    wrap: r(wrap),\n    svg: r(svg),\n    gapAboveCanvas: kit \u0026\u0026 wrap ? +(wrap.getBoundingClientRect().top - kit.getBoundingClientRect().bottom).toFixed(1) : null,\n    appClass: app ? app.className : null,\n    kitFlex: kit ? getComputedStyle(kit).flex : null,\n  };",
+      "start_line": 12,
+      "end_line": 20,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_widget.js",
+      "content": "Hardcoded screenshot path overwrites history and filtered console errors never fail the probe. `/tmp/widget-after-select.png` is fixed per run, and `errors.filter(/api\\/plugins/)` only logs. Make path configurable and exit non-zero on real console/page errors.",
+      "suggestion_code": "  await page.screenshot({ path: SCREENSHOT_PATH });\n  const realErrors = errors.filter(e =\u003e !/api\\/plugins/.test(e));\n  console.log('console errors:', JSON.stringify(realErrors));\n  if (realErrors.length) throw new Error(`widget console errors: ${realErrors.join('\\n')}`);",
+      "existing_code": "  await page.screenshot({ path: '/tmp/widget-after-select.png' });\n  console.log('console errors:', JSON.stringify(errors.filter(e =\u003e !/api\\/plugins/.test(e))));",
+      "start_line": 36,
+      "end_line": 37,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_run.js",
+      "content": "Hardcoded fallback credential + machine-specific absolute paths. `TOK || 'probe-token-9119'` means the probe silently authenticates with a known default if env is unset, exposing a credential in source. Absolute `require('/home/lenovo/...')` and `executablePath: '/usr/bin/google-chrome'` break portability on any other host/CI. Fail fast if TOK is missing and resolve playwright + channel via normal resolution.",
+      "suggestion_code": "const { chromium } = require('playwright');\nconst BASE = process.env.BASE || 'http://127.0.0.1:9119';\nconst TOKEN = process.env.TOK;\nif (!TOKEN) { console.error('Missing required env TOK'); process.exit(1); }",
+      "existing_code": "const { chromium } = require('/home/lenovo/.hermes/hermes-agent/node_modules/playwright');",
+      "start_line": 7,
+      "end_line": 7,
+      "category": "security",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_run.js",
+      "content": "Browser leak on failure: `browser.close()` is only on happy path + one early-return. Any throw in `goto/evaluate/click/screenshot` skips close and leaks headless Chrome (outer catch only logs + exit). Wrap in try/finally.",
+      "suggestion_code": "  let browser;\n  try {\n    browser = await chromium.launch({ headless: true });\n    // ... rest of probe ...\n  } finally {\n    await browser?.close().catch(()=\u003e{});\n  }",
+      "existing_code": "  const browser = await chromium.launch({ headless: true, executablePath: '/usr/bin/google-chrome' });",
+      "start_line": 15,
+      "end_line": 15,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_run.js",
+      "content": "Unawaited async `response` listener race: `page.on('response', async ...)` fire-and-forget with `await r.text()` means the final `for (network)` loop can run before in-flight handlers push, losing data. Also unhandled rejection if `r.text()` fails after navigation. Collect promises and `await Promise.allSettled(pending)` before printing, or use `page.waitForResponse()`/polling.",
+      "suggestion_code": "  const pending = [];\n  page.on('response', r =\u003e {\n    if (!/\\/api\\/(plugins|dashboard)/.test(r.url())) return;\n    pending.push((async () =\u003e {\n      let body='';\n      try { body = (await r.text()).slice(0,500); } catch(e){ body=`\u003cunreadable ${e.message}\u003e`; }\n      network.push({ status: r.status(), method: r.request().method(), url: r.url(), body });\n    })());\n  });\n  // before printing:\n  // await Promise.allSettled(pending);",
+      "existing_code": "  page.on('response', async r =\u003e {\n    const u = r.url();\n    if (!/\\/api\\/(plugins|dashboard)/.test(u)) return;\n    let body = '';\n    try { body = (await r.text()).slice(0, 500); } catch (e) { body = `\u003cunreadable ${e.message}\u003e`; }\n    network.push({ status: r.status(), method: r.request().method(), url: u, body });\n  });",
+      "start_line": 23,
+      "end_line": 29,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_run.js",
+      "content": "Collected `body` is fetched/truncated but never used: final loop only logs `status method url`, wasting `r.text()` I/O and discarding the diagnostic value. Either log `body` or stop fetching it.",
+      "suggestion_code": "  for (const x of network) console.log(`${x.status} ${x.method} ${x.url} :: ${x.body}`);",
+      "existing_code": "  for (const x of network) console.log(`${x.status} ${x.method} ${x.url}`);",
+      "start_line": 74,
+      "end_line": 74,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_run.js",
+      "content": "Fixed sleeps `waitForTimeout(1500/3500)` + `waitUntil: 'networkidle'` make probe flaky/slow. Prefer deterministic waits: `waitForSelector('[data-vw=\"run-now\"]')`, `waitForResponse(/\\/api\\/(plugins|dashboard)/)`, or `waitForFunction` on banner/status change with explicit timeout.",
+      "suggestion_code": "  await page.goto(BASE + '/workflows', { waitUntil: 'domcontentloaded', timeout: 15000 });\n  await page.waitForSelector('[data-vw=\"run-now\"]', { timeout: 10000 });",
+      "existing_code": "  await page.goto(BASE + '/workflows', { waitUntil: 'networkidle' });\n  await page.waitForTimeout(1500);",
+      "start_line": 31,
+      "end_line": 32,
+      "category": "performance",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_run.js",
+      "content": "Early-return duplicates cleanup and still leaks on later throws; final `screenshot + close` without finally means screenshot failure leaks browser. Consolidate close in `finally` and don't rely on per-branch `await browser.close()`.",
+      "suggestion_code": "  if (!n) { console.log('!! no [data-vw=\"run-now\"] button found'); return; } // let finally close browser",
+      "existing_code": "  if (!n) { console.log('!! no [data-vw=\"run-now\"] button found'); await browser.close(); return; }",
+      "start_line": 50,
+      "end_line": 50,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_heights.js",
+      "content": "Hardcoded absolute require path and executablePath make script non-portable. The absolute path `/home/lenovo/...` only works on one machine and bypasses normal module resolution; `executablePath: '/usr/bin/google-chrome'` breaks on CI/macOS/Windows. Use normal resolution + env override.",
+      "suggestion_code": "const { chromium } = require('playwright');\nconst EXECUTABLE_PATH = process.env.CHROME_EXECUTABLE_PATH || undefined; // let Playwright resolve by default",
+      "existing_code": "const { chromium } = require('/home/lenovo/.hermes/hermes-agent/node_modules/playwright');",
+      "start_line": 5,
+      "end_line": 5,
+      "category": "maintainability",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_heights.js",
+      "content": "Hardcoded BASE URL violates no-hardcoding rule and prevents reuse across envs. `http://127.0.0.1:9119` + `/workflows` path should come from env/argv with fallback.",
+      "suggestion_code": "const BASE = process.env.PROBE_BASE_URL || 'http://127.0.0.1:9119';",
+      "existing_code": "const BASE = 'http://127.0.0.1:9119';",
+      "start_line": 7,
+      "end_line": 7,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_heights.js",
+      "content": "Operator precedence bug: `.slice(0, 40)` binds only to the class-suffix ternary, not the full `sel` string (`a + b + c.slice()`). Long tag+id strings are never truncated as intended.",
+      "suggestion_code": "      sel: (el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (el.className \u0026\u0026 typeof el.className === 'string' ? '.' + el.className.trim().split(/\\s+/).join('.') : '')).slice(0, 40),",
+      "existing_code": "      sel: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (el.className \u0026\u0026 typeof el.className === 'string' ? '.' + el.className.trim().split(/\\s+/).join('.') : '').slice(0, 40),",
+      "start_line": 18,
+      "end_line": 18,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_heights.js",
+      "content": "Timing-dependent waits + force click make before/after comparison flaky: fixed waitForTimeout(1000/800) and `click({force:true})` without waiting for canvas/node readiness can click detached/hidden node or measure before layout settles.",
+      "suggestion_code": "  await page.locator('svg[data-vw=\"canvas\"]').waitFor({ state: 'visible' });\n  await node.waitFor({ state: 'visible' });\n  await node.click();\n  await page.waitForFunction(() =\u003e document.querySelector('svg[data-vw=\"canvas\"]')?.getBoundingClientRect().height \u003e 0);",
+      "existing_code": "  await node.click({ force: true });\n  await page.waitForTimeout(800);",
+      "start_line": 40,
+      "end_line": 41,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_shell.js",
+      "content": "dump() returns null when element is missing, so log line becomes `before null` with no name — before/after comparison can't tell which of shell/app/main/wrap is absent. Return {name, missing:true} instead.",
+      "suggestion_code": "  const dump = (el, name) =\u003e el ? ({",
+      "existing_code": "  const dump = (el, name) =\u003e el ? ({",
+      "start_line": 10,
+      "end_line": 10,
+      "category": "bug",
+      "severity": "low"
+    },
+    {
+      "path": ".hermes/probe_shell.js",
+      "content": "Second fixed sleep after click repeats the flakiness of the first: 'after' metrics race layout/animation. Wait for a deterministic post-click condition (URL/detail panel/selected node or stable height) instead of waitForTimeout(900).",
+      "suggestion_code": "  await page.waitForFunction(() =\u003e document.querySelector('.vw-wrap')?.getBoundingClientRect().height \u003e 0);",
+      "existing_code": "  await page.waitForTimeout(900);",
+      "start_line": 30,
+      "end_line": 30,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_chain.js",
+      "content": "`String(el.className || ...)` mis-reports SVG ancestors: for SVG elements `className` is an `SVGAnimatedString`, so `String(...)` logs `[object SVGAnimatedString]` instead of the real class. Use `getAttribute` which works for HTML and SVG.",
+      "suggestion_code": "      cls: String(el.getAttribute('class') || el.id || '').slice(0, 60),",
+      "existing_code": "      cls: String(el.className || el.id || '').slice(0, 34),",
+      "start_line": 17,
+      "end_line": 17,
+      "category": "bug",
+      "severity": "low"
+    },
+    {
+      "path": ".hermes/probe_heights.js",
+      "content": "Building init-script via string interpolation is fragile vs the function+arg form (avoids quoting/escaping pitfalls and makes the token flow explicit). Prefer `addInitScript(fn, token)`.",
+      "suggestion_code": "await ctx.addInitScript((token) =\u003e { window.__HERMES_SESSION_TOKEN__ = token; }, TOKEN);",
+      "existing_code": "await ctx.addInitScript(`window.__HERMES_SESSION_TOKEN__ = ${JSON.stringify(TOKEN)};`);",
+      "start_line": 33,
+      "end_line": 33,
+      "category": "security",
+      "severity": "low"
+    },
+    {
+      "path": ".hermes/probe_run.js",
+      "content": "Hardcoded probe configuration hurts reuse/portability: `BASE` default, `'/workflows'` path, viewport `1280x900`, and `'/tmp/run-click.png'` should come from env/args. Fixed screenshot path also overwrites on every run and breaks parallel runs/Windows.",
+      "suggestion_code": "const BASE = process.env.BASE; // required, no localhost default in committed code\nconst WORKFLOWS_PATH = process.env.WORKFLOWS_PATH || '/workflows';\nconst SCREENSHOT = process.env.SCREENSHOT || `/tmp/run-click-${Date.now()}.png`;",
+      "existing_code": "const BASE = process.env.BASE || 'http://127.0.0.1:9119';",
+      "start_line": 9,
+      "end_line": 9,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_run.js",
+      "content": "Silent pass when Run button missing: early `return` exits with code 0, so CI/scheduler treats \"button not found\" as success. Exit non-zero (or throw) so missing selector fails the probe.",
+      "suggestion_code": "  if (!n) { console.log('!! no [data-vw=\"run-now\"] button found'); process.exitCode = 1; return; }",
+      "existing_code": "  if (!n) { console.log('!! no [data-vw=\"run-now\"] button found'); await browser.close(); return; }",
+      "start_line": 50,
+      "end_line": 50,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_run.js",
+      "content": "Click without actionability checks: `visible=` is only logged, disabled/hidden state is ignored, and `run.innerText()/isVisible()` can race detachment after `count()`. Wait for `toBeVisible/toBeEnabled` or `waitFor({state:'visible'})` before clicking.",
+      "suggestion_code": "  await run.waitFor({ state: 'visible', timeout: 10000 });\n  console.log('=== run button ===', JSON.stringify(await run.innerText()), 'visible=', await run.isVisible(), 'enabled=', await run.isEnabled());",
+      "existing_code": "  console.log('=== run button ===', JSON.stringify(await run.innerText()), 'visible=', await run.isVisible());",
+      "start_line": 51,
+      "end_line": 51,
+      "category": "bug",
+      "severity": "low"
+    },
+    {
+      "path": ".hermes/probe_layout.js",
+      "content": "Null dereference on `app`: `Array.from(app.children)` runs unguarded while every other element is null-checked. If the shell selector changes (`.vw-app`/`#app` missing), `page.evaluate(measure)` throws TypeError and the probe reports PROBE FAILED instead of geometry.",
+      "suggestion_code": "  const app = document.querySelector('.vw-app') || document.querySelector('#app');\n  if (!app) return { error: 'app-shell-not-found', kitHeight: null, gapAboveCanvas: null };\n  const insp = document.querySelector('.vw-inspector') || document.querySelector('#inspector');\n  const r = el =\u003e (el ? el.getBoundingClientRect() : null);\n  const b = r(bar), s = r(svg);\n  // Every block between the shell top and the canvas, so an \"empty band\" has a name.\n  const stack = Array.from(app.children ?? []).map(el =\u003e {",
+      "existing_code": "  const app = document.querySelector('.vw-app') || document.querySelector('#app');\n  const insp = document.querySelector('.vw-inspector') || document.querySelector('#inspector');\n  const r = el =\u003e (el ? el.getBoundingClientRect() : null);\n  const b = r(bar), s = r(svg);\n  // Every block between the shell top and the canvas, so an \"empty band\" has a name.\n  const stack = Array.from(app.children).map(el =\u003e {",
+      "start_line": 15,
+      "end_line": 20,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/probe_layout.js",
+      "content": "Flaky readiness: `waitUntil: 'networkidle'` hangs/times out on dashboards with polling/websockets, and fixed `waitForTimeout(1200/900)` gives no guarantee the canvas/node exists. Measure/click can run too early or waste time.",
+      "suggestion_code": "  await page.goto(BASE + '/workflows', { waitUntil: 'domcontentloaded' });\n  await page.waitForSelector('[data-vw=\"canvas\"] g.node, svg g', { timeout: 15000 });",
+      "existing_code": "  await page.goto(BASE + '/workflows', { waitUntil: 'networkidle' });\n  await page.waitForTimeout(1200);",
+      "start_line": 50,
+      "end_line": 51,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_layout.js",
+      "content": "Unguarded fallback click: if the preferred node selector misses, code assumes `svg g` exists and clicks it. When the canvas is empty/erroring, this waits for the full Playwright timeout then throws an ambiguous error instead of failing fast with a clear diagnostic.",
+      "suggestion_code": "  } else {\n    const fallback = page.locator('svg g').first();\n    if (await fallback.count()) await fallback.click({ timeout: 5000 });\n    else throw new Error('probe: no canvas node found (both selectors empty)');\n  }",
+      "existing_code": "  } else {\n    await page.locator('svg g').first().click({ force: true });\n  }",
+      "start_line": 60,
+      "end_line": 62,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_layout.js",
+      "content": "Fixed post-click sleep (`waitForTimeout(900)`) doesn't wait for the selection/layout to actually settle, so `after selection` geometry is racy: too short on slow renders, wasted time on fast ones. Wait for a selection signal (selected node class / inspector visible / gap stable) instead.",
+      "suggestion_code": "  await page.waitForSelector('.vw-inspector:not(:empty), g.node.selected, g.node[data-selected=\"true\"]', { timeout: 5000 }).catch(() =\u003e {});\n  await page.waitForTimeout(300);",
+      "existing_code": "  await page.waitForTimeout(900);",
+      "start_line": 63,
+      "end_line": 63,
+      "category": "test",
+      "severity": "low"
+    },
+    {
+      "path": ".hermes/probe_wrap.js",
+      "content": "Hardcoded endpoint `http://127.0.0.1:9119` and `executablePath: /usr/bin/google-chrome` make the probe non-portable. Parameterize via env/args with defaults (e.g., `BASE_URL`, `CHROME_PATH`) and let Playwright resolve Chromium when unset.",
+      "suggestion_code": "const BASE = process.env.HERMES_BASE_URL || 'http://127.0.0.1:9119';",
+      "existing_code": "const BASE = 'http://127.0.0.1:9119';",
+      "start_line": 7,
+      "end_line": 7,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_wrap.js",
+      "content": "Brittle timing and forced selection: fixed `waitForTimeout(1200/900)` sleeps plus `click({force:true})` on a loosely filtered `g:has(rect)` make before/after measurements flaky and can click the wrong/hidden node. Use `waitForSelector`/`waitForLoadState` + explicit assertion that the node is visible/selected before measuring.",
+      "suggestion_code": "  const node = page.locator('[data-vw=\"canvas\"] g').filter({ has: page.locator('rect') }).first();\n  await node.waitFor({ state: 'visible' });\n  await node.click(); // avoid force:true\n  await page.waitForFunction(() =\u003e document.querySelector('.vw-wrap')?.dataset?.selected === 'true');",
+      "existing_code": "  const node = page.locator('[data-vw=\"canvas\"] g').filter({ has: page.locator('rect') }).first();\n  await node.click({ force: true });\n  await page.waitForTimeout(900);",
+      "start_line": 35,
+      "end_line": 37,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/probe_wrap.js",
+      "content": "Dead code: `svg` is queried but never read (probe only uses `wrap`/`kids`). Remove it to avoid confusion/maintenance cost.",
+      "suggestion_code": "  // remove unused svg query; kids already captures svg attrs if needed",
+      "existing_code": "  const svg = wrap \u0026\u0026 wrap.querySelector('svg');",
+      "start_line": 12,
+      "end_line": 12,
+      "category": "maintainability",
+      "severity": "low"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "ResizeObserver is never disconnected and ref unmount does nothing: watchSize() discards the observer instance and mount() early-returns on null, so navigating away leaks an observer that keeps calling fit() on detached DOM. Store the observer and disconnect + remove listeners when the ref is called with null.",
+      "suggestion_code": "  let sizeObserver = null;\n  function watchSize() {\n    if (typeof ResizeObserver !== 'function') return;\n    let width = el.wrap.clientWidth;\n    sizeObserver = new ResizeObserver(() =\u003e {\n      if (!el.wrap.isConnected) return;\n      if (el.wrap.clientWidth !== width) {\n        width = el.wrap.clientWidth;\n        fit();\n      }\n    });\n    sizeObserver.observe(el.wrap);\n  }\n  function destroy() { if (sizeObserver) sizeObserver.disconnect(); }\n  // in mount(null): node.__vwDesigner?.destroy()",
+      "existing_code": "  function watchSize() {\n    if (typeof ResizeObserver !== \"function\") return;\n    let width = el.wrap.clientWidth;\n    new ResizeObserver(() =\u003e {\n      if (el.wrap.clientWidth !== width) {\n        width = el.wrap.clientWidth;\n        fit();\n      }\n    }).observe(el.wrap);\n  }",
+      "start_line": 557,
+      "end_line": 566,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "mount() ignores unmount (ref(null)) and caches the designer on the DOM node, so there is no place to run cleanup (observer, document mousemove/mouseup during drag). Add an unmount branch that disconnects the observer and clears host content.",
+      "suggestion_code": "function createWorkflowsPage(call) {\n  function mount(node) {\n    if (!node) return; // TODO: disconnect observer / cleanup previous designer\n    if (node.__vwDesigner) return;\n    node.__vwDesigner = createDesigner(node, call);\n  }",
+      "existing_code": "function createWorkflowsPage(call) {\n  function mount(node) {\n    if (!node || node.__vwDesigner) return;\n    node.__vwDesigner = createDesigner(node, call);\n  }",
+      "start_line": 2393,
+      "end_line": 2397,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "Edge identity breaks if a node id contains '\u003e': edgeKey() joins with '\u003e' but removeSelected() recovers via split('\u003e') and takes parts[0]/parts[1], so 'a\u003eb\u003ec' cuts the wrong edge (and drops the remainder). Loaded designs/templates can supply arbitrary ids. Store {from,to} instead of a delimited string, or encode with JSON/lastIndexOf.",
+      "suggestion_code": "    if (selectedEdge) {\n      const sep = selectedEdge.lastIndexOf('\u003e');\n      cutEdge(selectedEdge.slice(0, sep), selectedEdge.slice(sep + 1));\n      return;\n    }\n    // better: let selectedEdge = {from, to} and avoid string encoding entirely",
+      "existing_code": "    if (selectedEdge) {\n      const parts = selectedEdge.split(\"\u003e\");\n      cutEdge(parts[0], parts[1]);\n      return;\n    }",
+      "start_line": 834,
+      "end_line": 838,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "weekdayOf() is off-by-one: WEEKDAYS[0] is 'mon' but cron 0/7 is Sunday and 1 is Monday, so a saved weekly cron displays the wrong day (e.g. '0 9 * * 1' shows Tuesday) and re-saving silently moves the schedule a day. Map through DAY_NAMES or a mon-based offset table and special-case 7-\u003esun.",
+      "suggestion_code": "function weekdayOf(expression) {\n  const f = String(expression || '').trim().split(/\\s+/);\n  if (f.length === 5 \u0026\u0026 /^\\d+$/.test(f[4])) {\n    const dayName = DAY_NAMES[parseInt(f[4], 10) % 7]; // 0=Sunday\n    const hit = WEEKDAYS.find((p) =\u003e p[1] === dayName);\n    return hit ? hit[0] : 'mon';\n  }\n  return 'mon';\n}",
+      "existing_code": "function weekdayOf(expression) {\n  const f = String(expression || \"\").trim().split(/\\s+/);\n  if (f.length === 5 \u0026\u0026 /^\\d+$/.test(f[4])) return WEEKDAYS[parseInt(f[4], 10) % 7][0];\n  return \"mon\";\n}",
+      "start_line": 219,
+      "end_line": 223,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "presetOf() classifies any other weekday field as 'weekly', including lists like '1,3' or steps, which the weekly UI cannot represent. Opening such a cron then rebuilding via buildCron() silently coerces it to a single day. Return 'custom' unless f[4] is a single numeric weekday.",
+      "suggestion_code": "  if (f[4] === '*') return 'daily';\n  if (/^\\d+$/.test(f[4])) return 'weekly';\n  return 'custom';",
+      "existing_code": "function presetOf(expression) {\n  const text = String(expression || \"\").trim();\n  if (cronProblem(text)) return \"custom\";\n  const f = text.split(/\\s+/);\n  if (f[2] !== \"*\" || f[3] !== \"*\") return \"custom\";\n  if (f[1] === \"*\") return \"hourly\";\n  if (f[4] === \"1-5\") return \"weekdays\";\n  if (f[4] === \"*\") return \"daily\";\n  return \"weekly\";\n}",
+      "start_line": 200,
+      "end_line": 209,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "scheduleForm() captures a stale cron: expression/reading are computed once at render, time/cron inputs only update schedTime/schedCron variables without recomputing, and the 'Schedule it' handler closes over the old expression. Editing time then pressing Schedule schedules the old time with a stale preview. Recompute buildCron() inside the click handler (and live-update reading on input).",
+      "suggestion_code": "    const reading = document.createElement('p');\n    const refreshReading = () =\u003e {\n      const expression = buildCron(schedPreset, schedTime, schedDay, schedCron);\n      const problem = cronProblem(expression);\n      reading.className = problem ? 'vw-error' : 'vw-hint';\n      reading.textContent = problem ? '' : describeCron(expression) + '  (' + expression + ')';\n      return expression;\n    };\n    refreshReading();\n    // call refreshReading() in each input handler and inside the Schedule click before cronProblem()",
+      "existing_code": "    const expression = buildCron(schedPreset, schedTime, schedDay, schedCron);\n    const reading = document.createElement(\"p\");\n    const problem = cronProblem(expression);\n    reading.className = problem ? \"vw-error\" : \"vw-hint\";\n    reading.textContent = problem ? \"\" : describeCron(expression) + \"  (\" + expression + \")\";",
+      "start_line": 1834,
+      "end_line": 1838,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "ageText()/waitText() assume epoch-seconds numbers: Number(isoString) is NaN, so Runs show 'NaN d ago' and timed-gate deadlines silently vanish (!NaN is true). Accept ISO strings via Date.parse and guard NaN with a fallback like 'unknown age'.",
+      "suggestion_code": "  function ageText(ts) {\n    let when = typeof ts === 'string' ? Date.parse(ts) / 1000 : Number(ts || 0);\n    if (!Number.isFinite(when) || when \u003c= 0) return 'unknown age';\n    // if millis were passed, normalize to seconds\n    if (when \u003e 1e11) when = when / 1000;\n    const age = Math.max(0, Math.round(Date.now() / 1000 - when));",
+      "existing_code": "  function ageText(seconds) {\n    const age = Math.max(0, Math.round(Date.now() / 1000 - Number(seconds || 0)));",
+      "start_line": 1534,
+      "end_line": 1535,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "Node/link drags rebuild the entire SVG (draw() tears down all nodes, edges, and listeners) on every mousemove pixel. This is O(nodes+edges) DOM churn per pixel and will jank on larger graphs. Update the dragged \u003cg\u003e transform / ghost path position during move (rAF-throttled) and full-draw only on mouseup.",
+      "suggestion_code": "      function onMove(moveEv) {\n        const p = svgPoint(moveEv);\n        if (Math.abs(p.x - start.x) \u003e 3 || Math.abs(p.y - start.y) \u003e 3) moved = true;\n        n.x = Math.max(0, Math.round(p.x - offset.x));\n        n.y = Math.max(0, Math.round(p.y - offset.y));\n        // TODO: move only the dragged \u003cg\u003e here (requestAnimationFrame); draw() on mouseup\n        g.setAttribute('transform', 'translate(' + n.x + ',' + n.y + ')');\n      }",
+      "existing_code": "      function onMove(moveEv) {\n        const p = svgPoint(moveEv);\n        if (Math.abs(p.x - start.x) \u003e 3 || Math.abs(p.y - start.y) \u003e 3) moved = true;\n        n.x = Math.max(0, Math.round(p.x - offset.x));\n        n.y = Math.max(0, Math.round(p.y - offset.y));\n        draw();\n      }",
+      "start_line": 701,
+      "end_line": 707,
+      "category": "performance",
+      "severity": "medium"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "describeCron() shows 'every hour at :NaN' for a valid '* * * * *' cron: the hourly branch assumes f[0] is numeric without checking. Guard with /^\\d+$/ like the branch below, falling back to 'custom schedule' or 'every hour'.",
+      "suggestion_code": "  if (f[1] === '*') {\n    if (!/^\\d+$/.test(f[0])) return 'custom schedule';\n    return 'every hour at :' + pad2(parseInt(f[0], 10));\n  }",
+      "existing_code": "  if (f[1] === \"*\") return \"every hour at :\" + pad2(parseInt(f[0], 10));",
+      "start_line": 190,
+      "end_line": 190,
+      "category": "bug",
+      "severity": "low"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "Drag/link gestures only listen for mouseup: if the pointer is released off-window, cancelled (pointercancel), or the tab loses focus, onUp never runs, leaving fitLocked=true and a stale dragLink ghost so the canvas never refits. Also listen for pointercancel/blur (or use setPointerCapture) and always reset fitLocked/dragLink in the cleanup path.",
+      "suggestion_code": "    function onUp(upEv) {\n      document.removeEventListener('mousemove', onMove);\n      document.removeEventListener('mouseup', onUp);\n      document.removeEventListener('pointercancel', onUp);\n      window.removeEventListener('blur', onUp);\n      // always: dragLink = null; fitLocked = false; draw();",
+      "existing_code": "    function onUp(upEv) {\n      document.removeEventListener(\"mousemove\", onMove);\n      document.removeEventListener(\"mouseup\", onUp);",
+      "start_line": 771,
+      "end_line": 773,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "Scheduler helpers (buildCron/presetOf/describeCron/cronProblem/timeOf/weekdayOf) and the scheduleFields vs scheduleForm UIs are maintained by copy from Python + dashboard/widget sources (noted in comments). Any fix here (e.g. weekday mapping, custom shapes) must be mirrored in 3+ places or saved cron vs displayed schedule drift. Extract a single shared module or at minimum pin the copies with a cross-file test.",
+      "suggestion_code": "// TODO: share one cron/scheduler helper across desktop/plugin.js, dashboard/dist/index.js,\n// widgets/designer.html and visual_workflow_hermes/schedule.py instead of copying.\nfunction buildCron(preset, time, weekday, custom) {",
+      "existing_code": "function buildCron(preset, time, weekday, custom) {",
+      "start_line": 129,
+      "end_line": 129,
+      "category": "maintainability",
+      "severity": "low"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "loadGraph() trusts the server payload: `next \u0026\u0026 next.nodes` passes for a non-array (string/object), then layout()/draw()/forEach throw and leave a blank canvas. Templates, saved designs, and run graphs are all untrusted input — validate Array.isArray and coerce per-node x/y/after/type before drawing.",
+      "suggestion_code": "  function loadGraph(next) {\n    const clean = (next \u0026\u0026 Array.isArray(next.nodes)) ? next : BLANK;\n    graph = clone(clean);\n    graph.nodes = graph.nodes.filter((n) =\u003e n \u0026\u0026 typeof n.id === 'string');\n    graph.nodes.forEach((n) =\u003e {\n      if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) { delete n.x; delete n.y; }\n      if (!Array.isArray(n.after)) n.after = [];\n    });",
+      "existing_code": "  function loadGraph(next) {\n    graph = clone(next \u0026\u0026 next.nodes ? next : BLANK);",
+      "start_line": 2349,
+      "end_line": 2350,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "Run-before-refresh race: savedNames starts empty and is filled by async refreshDesigns(), so pressing Run immediately after load (or after Save before refresh resolves) wrongly reports \"not saved yet\" even for a saved design. Re-read the list or attempt the run and surface the server 404 instead of gating on a possibly-stale cache.",
+      "suggestion_code": "    // TODO: don't gate on savedNames until refreshDesigns() has resolved;\n    // e.g. `if (designsLoaded \u0026\u0026 !savedNames.includes(name))` else allow the POST\n    // and surface the server error.\n    if (!savedNames.includes(name)) {",
+      "existing_code": "    // A draft that was never saved has no server-side design to run: saying so beats a 404.\n    if (!savedNames.includes(name)) {\n      showErrors([{ node: \"\", field: \"name\", msg: name + \" is not saved yet\" }]);",
+      "start_line": 2033,
+      "end_line": 2035,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "Schedule payloads disagree: the inspector posts only {preset:'custom', cron} while the Schedules form posts {preset, time, weekday, cron}. If the backend stores/displays the friendly preset, inspector-created jobs lose their human-readable schedule. Send the same shape from both call sites.",
+      "suggestion_code": "      call(designPath(name) + '/schedule', {\n        method: 'POST',\n        body: { preset: presetOf(node.schedule), time: timeOf(node.schedule), weekday: weekdayOf(node.schedule), cron: node.schedule },\n      }).then((data) =\u003e {",
+      "existing_code": "      call(designPath(name) + \"/schedule\", {\n        method: \"POST\",\n        body: { preset: \"custom\", cron: node.schedule },\n      }).then((data) =\u003e {",
+      "start_line": 1169,
+      "end_line": 1172,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "desktop/plugin.js",
+      "content": "Confirmed safe sink usage (no change needed, noted for the focus area): untrusted ids/titles/descriptions only reach textContent/.value/property setters and setAttribute (data-id, data-edge, transform keeps numeric x/y via layout), with the single insertAdjacentHTML fed by the constant TEMPLATE — no user string flows into markup parsing. Keep it that way; do not switch previews/labels to innerHTML.",
+      "existing_code": "      const tip = svgEl(\"title\", {});\n      tip.textContent = n.id + \" \\u00b7 \" + (TIPS[n.type] || n.type);",
+      "start_line": 618,
+      "end_line": 619,
+      "category": "security",
+      "severity": "low"
+    },
+    {
+      "path": ".hermes/fix_probe_run.py",
+      "content": "Assert guards external persisted state and is stripped under `python -O`. With optimizations enabled the `running` check disappears and the script would blindly overwrite any existing verdict (e.g. succeeded/shipped) to `failed`, corrupting history. Use an explicit check that always executes.",
+      "suggestion_code": "if state.get(\"status\") != \"running\":\n    raise SystemExit(f\"refusing to overwrite non-running run: {state.get('status')!r}\")",
+      "existing_code": "assert state[\"status\"] == \"running\", state[\"status\"]",
+      "start_line": 15,
+      "end_line": 15,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/check_runs_route.py",
+      "content": "Missing guard before dynamic import: the script only prints `DEPLOYED.is_file()` but unconditionally proceeds to `spec_from_file_location` / `module_from_spec` / `exec_module`. If the file is missing, `spec` can be `None` (AttributeError on `spec.name`) or `spec.loader` can be `None` / `exec_module` raises `FileNotFoundError`, producing an obscure failure instead of a clear diagnostic exit.",
+      "suggestion_code": "if not DEPLOYED.is_file():\n    print(f\"deployed plugin not found: {DEPLOYED}\", file=sys.stderr)\n    raise SystemExit(1)\nspec = importlib.util.spec_from_file_location(\"deployed_plugin_api\", DEPLOYED)\nif spec is None or spec.loader is None:\n    print(f\"cannot create import spec for: {DEPLOYED}\", file=sys.stderr)\n    raise SystemExit(1)\nmod = importlib.util.module_from_spec(spec)\nsys.modules[spec.name] = mod\nspec.loader.exec_module(mod)",
+      "existing_code": "spec = importlib.util.spec_from_file_location(\"deployed_plugin_api\", DEPLOYED)\nmod = importlib.util.module_from_spec(spec)\nsys.modules[spec.name] = mod\nspec.loader.exec_module(mod)",
+      "start_line": 12,
+      "end_line": 15,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/check_runs_route.py",
+      "content": "Unvalidated `list_runs` response and row schema: `mod.list_runs(limit=10)[\"runs\"]` assumes a dict with a list under `\"runs\"`, and the loop assumes every row has `run_id`/`status`/`name`/`node_id`/`options`/`updated` with `updated` convertible via `int()`. An error shape, `None`, empty result, or evolved schema raises `KeyError`/`TypeError`/`ValueError` with no context. Validate the envelope and use defensive access.",
+      "suggestion_code": "payload = mod.list_runs(limit=10)\nif not isinstance(payload, dict) or not isinstance(payload.get(\"runs\"), list):\n    print(f\"unexpected list_runs response: {payload!r:.500}\", file=sys.stderr)\n    raise SystemExit(1)\nrows = payload[\"runs\"]\nprint(\"runs listed:\", len(rows))\nfor row in rows:\n    try:\n        print(\n            f\"  {row['run_id']}  {row['status']:\u003c18} name={row['name']!r} \"\n            f\"node={row['node_id']!r} options={row.get('options')} updated={int(row['updated'])}\"\n        )\n    except (KeyError, TypeError, ValueError) as e:\n        print(f\"skipping malformed row {row!r:.500}: {e}\", file=sys.stderr)",
+      "existing_code": "rows = mod.list_runs(limit=10)[\"runs\"]\nprint(\"runs listed:\", len(rows))\nfor row in rows:\n    print(\n        f\"  {row['run_id']}  {row['status']:\u003c18} name={row['name']!r} \"\n        f\"node={row['node_id']!r} options={row['options']} updated={int(row['updated'])}\"\n    )",
+      "start_line": 17,
+      "end_line": 23,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/live_notify.py",
+      "content": "Unused `text` payload: the multi-line test message is defined but never passed to `delivery.deliver_output`, which uses a different inline `message` string. This is dead code and the two messages can diverge (receiver sees different copy than maintained here). Either pass `text` through or delete it.",
+      "suggestion_code": "receipt = delivery.deliver_output(\n    {\"id\": \"live-test\", \"deliver\": \"notification\", \"target\": platform},\n    {\n        \"message\": text,\n        \"sent_at\": \"2026-10-29\",\n    },\n    run_name=\"live-delivery-test\",\n)\n# Or, if the inline message is intentional, delete the unused `text` block above.",
+      "existing_code": "text = (\n    \"TEST — visual-workflow live delivery test\\n\\n\"\n    \"This is a test notification from the Hermes visual-workflow plugin.\\n\"\n    \"If you can read this, the notification delivery path works.\\n\"\n    \"No workflow data is attached.\"\n)",
+      "start_line": 43,
+      "end_line": 48,
+      "category": "other",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/live_diagnose_probe.py",
+      "content": "Unguarded None call: llm_spawn() explicitly returns None when the host is not importable (spawn.py:80-81), and this file even prints `spawn is not None` proving it expects that case — but then unconditionally calls `spawn(step, {})`, which raises `TypeError: 'NoneType' object is not callable` instead of exiting cleanly with a diagnostic.",
+      "suggestion_code": "if spawn is None:\n    print(\"no spawn backend: host PluginLlm not importable\", flush=True)\n    sys.exit(2)\nout = spawn(step, {})",
+      "existing_code": "out = spawn(step, {})",
+      "start_line": 25,
+      "end_line": 25,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/live_diagnose_probe.py",
+      "content": "Unused import: `pathlib` is never referenced in the file. Remove it to avoid dead code / lint noise.",
+      "suggestion_code": "import sys",
+      "existing_code": "import pathlib",
+      "start_line": 7,
+      "end_line": 7,
+      "category": "maintainability",
+      "severity": "low"
+    },
+    {
+      "path": ".hermes/live_diagnose_probe.py",
+      "content": "Hard-coded user-specific absolute paths make the probe non-portable (fails with ModuleNotFoundError on any other machine/user). Prefer deriving from $HOME / env var, e.g. `pathlib.Path.home() / '.hermes' / ...` or `os.environ`.",
+      "suggestion_code": "AGENT_ROOT = str(pathlib.Path.home() / \".hermes\" / \"hermes-agent\")",
+      "existing_code": "AGENT_ROOT = \"/home/lenovo/.hermes/hermes-agent\"",
+      "start_line": 10,
+      "end_line": 10,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/live_approval_check.py",
+      "content": "Resume branch indexes sys.argv[2]/sys.argv[3] without length validation, so `resume` with missing run_id/answer raises bare IndexError instead of a usage error. Worse, the `else: start()` fail-open means any typo (e.g. `resum`, `--help`, `resume` with missing args handled differently) starts a fresh live run with real `deliver_output` side effects instead of failing fast.",
+      "suggestion_code": "if __name__ == \"__main__\":\n    if sys.argv[1:2] == [\"resume\"]:  # resume \u003crun_id\u003e \u003canswer\u003e\n        if len(sys.argv) != 4:\n            print(f\"usage: {sys.argv[0]} [resume \u003crun_id\u003e \u003canswer\u003e]\", file=sys.stderr)\n            sys.exit(2)\n        resume(sys.argv[2], sys.argv[3])\n    elif len(sys.argv) == 1:\n        start()\n    else:\n        print(f\"usage: {sys.argv[0]} [resume \u003crun_id\u003e \u003canswer\u003e]\", file=sys.stderr)\n        sys.exit(2)",
+      "existing_code": "if __name__ == \"__main__\":\n    if sys.argv[1:2] == [\"resume\"]:  # resume \u003crun_id\u003e \u003canswer\u003e\n        resume(sys.argv[2], sys.argv[3])\n    else:\n        start()",
+      "start_line": 45,
+      "end_line": 49,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/live_retry_server.py",
+      "content": "sys.path priority inversion: each `insert(0, ...)` pushes prior entries down, so final order is `[hermes-agent, Hermes-Workflow, DEPLOYED, ...]` — DEPLOYED ends up last, not first. `from dashboard.plugin_api import router` will thus resolve to the source checkout when both locations contain `dashboard/plugin_api.py`, defeating the stated purpose of serving the deployed copy.",
+      "suggestion_code": "DEPLOYED = \"/home/lenovo/.hermes/plugins/visual-workflow\"\nsys.path.insert(0, \"/home/lenovo/.hermes/hermes-agent\")\nsys.path.insert(0, \"/home/lenovo/Development/Hermes-Workflow\")\nsys.path.insert(0, DEPLOYED)  # deployed copy first: must be inserted last to end up at index 0",
+      "existing_code": "DEPLOYED = \"/home/lenovo/.hermes/plugins/visual-workflow\"\nsys.path.insert(0, DEPLOYED)                      # deployed copy first\nsys.path.insert(0, \"/home/lenovo/Development/Hermes-Workflow\")\nsys.path.insert(0, \"/home/lenovo/.hermes/hermes-agent\")",
+      "start_line": 8,
+      "end_line": 11,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/live_agent_generate.py",
+      "content": "Live production run is mutated with no backup/snapshot. This POST with agent_generate resumes the real parked run and rewrites ~/.hermes/workflow-runs/31d5dbf2d6bb.json on disk (confirmed by the after-read). If generation fails part-way the parked run can be left corrupted with no way to restore. Copy the run file to a .bak before the POST, or add a dry-run flag.",
+      "suggestion_code": "import shutil\nrun_file = pathlib.Path.home() / \".hermes/workflow-runs\" / f\"{RUN_ID}.json\"\nshutil.copy2(run_file, run_file.with_suffix(\".json.bak\"))\nres = client.post(\n    f\"/api/plugins/visual-workflow/runs/{RUN_ID}/respond\",\n    json={\"run_id\": RUN_ID, \"node_id\": NODE, \"agent_generate\": True},\n)",
+      "existing_code": "res = client.post(\n    f\"/api/plugins/visual-workflow/runs/{RUN_ID}/respond\",\n    json={\"run_id\": RUN_ID, \"node_id\": NODE, \"agent_generate\": True},\n)",
+      "start_line": 38,
+      "end_line": 41,
+      "category": "other",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/live_agent_generate.py",
+      "content": "Unguarded res.json() loses the diagnostics this probe exists to collect. If the route returns a non-JSON error (500 HTML, empty body, plain-text traceback) res.json() raises and the script exits before printing status/outputs/error. Check content-type / status or wrap in try/except and fall back to res.text.",
+      "suggestion_code": "print(\"HTTP\", res.status_code, flush=True)\ntry:\n    r = res.json()\nexcept ValueError:\n    print(\"non-JSON body:\", res.text[:2000], flush=True)\n    raise",
+      "existing_code": "print(\"HTTP\", res.status_code, flush=True)\nr = res.json()",
+      "start_line": 42,
+      "end_line": 43,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/live_agent_generate.py",
+      "content": "Unchecked dynamic plugin load fails with unclear error if path/API drifts. spec_from_file_location() can return None and spec.loader can be None, so module_from_spec(spec) / spec.loader.exec_module(mod) and later mod.router / mod.llm_spawn raise AttributeError instead of a clear message.",
+      "suggestion_code": "spec = importlib.util.spec_from_file_location(\"dp\", PLUG / \"dashboard\" / \"plugin_api.py\")\nif spec is None or spec.loader is None:\n    raise RuntimeError(f\"cannot load plugin_api from {PLUG / 'dashboard' / 'plugin_api.py'}\")\nmod = importlib.util.module_from_spec(spec)\nsys.modules[\"dp\"] = mod\nspec.loader.exec_module(mod)",
+      "existing_code": "spec = importlib.util.spec_from_file_location(\"dp\", PLUG / \"dashboard\" / \"plugin_api.py\")\nmod = importlib.util.module_from_spec(spec)\nsys.modules[\"dp\"] = mod\nspec.loader.exec_module(mod)",
+      "start_line": 22,
+      "end_line": 25,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "__init__.py",
+      "content": "Broad `except ImportError` fallback masks inner failures in `visual_workflow_hermes`. If that module itself raises `ImportError`/`ModuleNotFoundError` (missing third-party dep inside it, or `register` renamed/removed), the first relative import fails for that inner reason, then the fallback absolute import runs and either fails again with a confusing chained traceback or — worse — succeeds by picking up a different `visual_workflow_hermes` from `sys.path`. Narrow the fallback so it only triggers when the relative import is impossible (no parent package), or branch on `__package__` instead of try/except.",
+      "suggestion_code": "if __package__:\n    from .visual_workflow_hermes import register  # noqa: F401\nelse:  # imported as a top-level module (tests, `hermes plugins doctor` probe)\n    from visual_workflow_hermes import register  # noqa: F401",
+      "existing_code": "try:  # host loader: this file is ``\u003cplugin pkg\u003e.__init__``\n    from .visual_workflow_hermes import register  # noqa: F401\nexcept ImportError:  # imported as a top-level module (tests, `hermes plugins doctor` probe)\n    from visual_workflow_hermes import register  # noqa: F401",
+      "start_line": 9,
+      "end_line": 12,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/repair_run_status.py",
+      "content": "Hard-coded developer sys.path makes the script unportable: it fails with ModuleNotFoundError on any other machine/user and can shadow an installed package. Derive the repo root from __file__ or rely on an installed package / PYTHONPATH instead.",
+      "suggestion_code": "import pathlib\nROOT = pathlib.Path(__file__).resolve().parents[1]\nif str(ROOT) not in sys.path:\n    sys.path.insert(0, str(ROOT))",
+      "existing_code": "sys.path.insert(0, \"/home/lenovo/Development/Hermes-Workflow\")",
+      "start_line": 13,
+      "end_line": 13,
+      "category": "maintainability",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/repair_run_status.py",
+      "content": "Store roots ignore HERMES_HOME. DesignStore/RunStore default to $HERMES_HOME when root is None (see store._hermes_home()), but this script forces ~/.hermes, so it repairs the wrong directory for users with a custom HERMES_HOME.",
+      "suggestion_code": "import os\nhome = Path(os.environ.get(\"HERMES_HOME\") or (Path.home() / \".hermes\"))",
+      "existing_code": "home = Path.home() / \".hermes\"",
+      "start_line": 18,
+      "end_line": 18,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/repair_run_status.py",
+      "content": "Truncated scan silently leaves stranded runs unrepaired: recent(limit=200) returns only the 200 newest runs, so anything older stays 'running' with no warning or follow-up. Iterate all runs (e.g. list_runs()) or at least warn when the limit is hit.",
+      "suggestion_code": "for run_id in runs.list_runs():\n    try:\n        state = runs.load(run_id)\n    except (OSError, ValueError):\n        skipped.append((run_id, \"unreadable run\"))\n        continue\n    row = {\"run_id\": run_id, \"state\": state}",
+      "existing_code": "for row in runs.recent(limit=200):",
+      "start_line": 23,
+      "end_line": 23,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/repair_run_status.py",
+      "content": "Narrow except plus unguarded accesses lets one bad row abort the whole batch. designs.load() can raise OSError beyond FileNotFoundError, build_run_plan() on corrupt JSON (non-dict designer, missing id) can raise AttributeError/KeyError/TypeError, and plan['steps']/cursor comparison can raise KeyError/TypeError (e.g. cursor=None/str). None of these are caught, so the loop crashes and remaining runs are skipped. Wrap per-run handling broadly and continue.",
+      "suggestion_code": "    try:\n        design = designs.load(state.get(\"name\") or \"\")\n        plan = build_run_plan(design)\n        steps = plan.get(\"steps\")\n        if not isinstance(steps, list):\n            raise ValueError(\"plan has no steps list\")\n        cursor = state.get(\"cursor\", 0)\n        if not isinstance(cursor, int):\n            raise ValueError(f\"bad cursor {cursor!r}\")\n    except Exception as e:\n        skipped.append((run_id, f\"design/plan unreadable: {e}\"))\n        continue\n    if cursor \u003c len(steps):",
+      "existing_code": "    try:\n        plan = build_run_plan(designs.load(state.get(\"name\") or \"\"))\n    except (FileNotFoundError, ValueError):\n        skipped.append((run_id, \"design missing or invalid\"))\n        continue\n    if state.get(\"cursor\", 0) \u003c len(plan[\"steps\"]):",
+      "start_line": 27,
+      "end_line": 32,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/repair_run_status.py",
+      "content": "Save path can KeyError/crash or write an orphan file: RunStore.save() derives the path from state['run_id'], while the loop iterates row['run_id']. If state lacks run_id or disagrees with the filename (corrupt run), this raises KeyError or creates a new file leaving the original stranded. Also runs.save() errors are uncaught and abort the batch. Validate/coerce state['run_id'] = run_id and guard save per-run.",
+      "suggestion_code": "    state[\"run_id\"] = run_id\n    state[\"status\"] = \"done\"\n    try:\n        runs.save(state)\n    except (OSError, ValueError, KeyError) as e:\n        skipped.append((run_id, f\"save failed: {e}\"))\n        continue\n    repaired.append(run_id)",
+      "existing_code": "    state[\"status\"] = \"done\"\n    runs.save(state)\n    repaired.append(run_id)",
+      "start_line": 35,
+      "end_line": 37,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/repair_run_status.py",
+      "content": "No `if __name__ == '__main__':` guard: importing this module executes the repair (store creation + mutation + print) as a side effect. Wrap logic in main() so it is only run as a script.",
+      "suggestion_code": "def main() -\u003e None:\n    repaired, skipped = [], []\n    ...\nif __name__ == \"__main__\":\n    main()",
+      "existing_code": "repaired, skipped = [], []",
+      "start_line": 22,
+      "end_line": 22,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/seam_probe.py",
+      "content": "Hardcoded user-specific absolute paths make this probe non-portable: it only works on one developer machine and breaks everywhere else. Deriving paths from HERMES_HOME / repo-relative Path or env vars and checking existence before mutating sys.path would keep the diagnostic usable.",
+      "suggestion_code": "_REPO = Path(__file__).resolve().parents[1]\n_AGENT = Path(os.environ.get(\"HERMES_HOME\") or (Path.home() / \".hermes\")) / \"hermes-agent\"\nfor _p in (str(_REPO), str(_AGENT)):\n    if _p not in sys.path and Path(_p).is_dir():\n        sys.path.insert(0, _p)",
+      "existing_code": "_REPO = \"/home/lenovo/Development/Hermes-Workflow\"\nfor _p in (_REPO, \"/home/lenovo/.hermes/hermes-agent\"):\n    if _p not in sys.path:\n        sys.path.insert(0, _p)",
+      "start_line": 9,
+      "end_line": 12,
+      "category": "maintainability",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/seam_probe.py",
+      "content": "env.read_text() raises FileNotFoundError when the .env file is absent, so the probe crashes before it ever reaches the send seam it is meant to test. Guard with exists() / try-except so a missing file is a warning, not a fatal error.",
+      "suggestion_code": "env = Path(os.environ.get(\"HERMES_HOME\") or (Path.home() / \".hermes\")) / \".env\"\ntry:\n    _lines = env.read_text(encoding=\"utf-8\", errors=\"ignore\").splitlines()\nexcept FileNotFoundError:\n    print(f\"warn: no env file at {env}, continuing\", file=sys.stderr)\n    _lines = []\nfor line in _lines:",
+      "existing_code": "env = Path(os.environ.get(\"HERMES_HOME\") or (Path.home() / \".hermes\")) / \".env\"\nfor line in env.read_text(encoding=\"utf-8\", errors=\"ignore\").splitlines():",
+      "start_line": 14,
+      "end_line": 15,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/seam_probe.py",
+      "content": "Unconditional live Telegram send executes at import time (no def main() / if __name__ == '__main__' guard). Merely importing seam_probe — e.g. from tooling or tests — spams production and conflates probing with side effects. Wrap in a main guard and require explicit opt-in.",
+      "suggestion_code": "def main(dry_run: bool = False) -\u003e None:\n    out = send_message_tool(\n        {\"action\": \"send\", \"target\": \"telegram\", \"message\": \"TEST — visual-workflow seam probe\"}\n    )\n    print(\"raw:\", out)\n\nif __name__ == \"__main__\":\n    # e.g. only send when --live is passed; default to dry-run/log\n    main(dry_run=\"--live\" not in sys.argv)",
+      "existing_code": "    out = send_message_tool(\n        {\"action\": \"send\", \"target\": \"telegram\", \"message\": \"TEST — visual-workflow seam probe\"}\n    )",
+      "start_line": 28,
+      "end_line": 30,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/seam_probe.py",
+      "content": "Catching Exception with only traceback.print_exc() leaves exit status 0, so CI/automation cannot detect the probe failed. Re-raise or exit non-zero after logging.",
+      "suggestion_code": "except Exception:\n    traceback.print_exc()\n    sys.exit(1)",
+      "existing_code": "except Exception:\n    traceback.print_exc()",
+      "start_line": 32,
+      "end_line": 33,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/convert.py",
+      "content": "Duplicate or missing step ids are silently collapsed. `by_id`/`index` dict comprehensions overwrite duplicate ids (including `None` from `n.get(\"id\")` when id is missing), so `len(by_id) \u003c len(steps)` and steps are silently lost instead of raising a validation error. Validate ids upfront: require a non-empty string id and reject duplicates.",
+      "suggestion_code": "    for s in steps:\n        if not s.get(\"id\"):\n            raise ValueError(f\"step is missing required 'id': {s!r}\")\n    ids = [s[\"id\"] for s in steps]\n    dupes = sorted({i for i in ids if ids.count(i) \u003e 1})\n    if dupes:\n        raise ValueError(f\"duplicate step ids: {', '.join(dupes)}\")\n    by_id = {s[\"id\"]: s for s in steps}\n    index = {s[\"id\"]: i for i, s in enumerate(steps)}",
+      "existing_code": "    by_id = {s[\"id\"]: s for s in steps}\n    index = {s[\"id\"]: i for i, s in enumerate(steps)}",
+      "start_line": 27,
+      "end_line": 28,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/convert.py",
+      "content": "Dangling `after` references are silently ignored, turning a broken edge into a ready root that runs out of order. The `if p in by_id` filter drops unknown parents without error (and `build_run_plan` only strips trigger/note ids, leaving typos/dangling ids in `after`). Fail fast on unknown parents instead of filtering.",
+      "suggestion_code": "    deps: dict[str, list[str]] = {}\n    for nid, s in by_id.items():\n        parents = s.get(\"after\") or []\n        unknown = [p for p in parents if p not in by_id]\n        if unknown:\n            raise ValueError(f\"step {nid!r} depends on unknown step(s): {', '.join(unknown)}\")\n        deps[nid] = list(parents)",
+      "existing_code": "    deps = {nid: [p for p in (s.get(\"after\") or []) if p in by_id] for nid, s in by_id.items()}",
+      "start_line": 29,
+      "end_line": 29,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/convert.py",
+      "content": "Unknown node types pass through unchecked. There is no `else` after the agent/condition/approval/output branches, so a typo'd `type` (or missing type/`None`) becomes a payload-less `{\"id\", \"kind\", \"after\"}` step that still enters the run plan and topological sort. Validate `kind` and raise ValueError on unrecognized types.",
+      "suggestion_code": "        elif kind == \"output\":\n            step[\"keys\"] = after\n            # Delivery is optional: an output that only collects stays exactly as before.\n            if n.get(\"deliver\"):\n                step[\"deliver\"] = str(n[\"deliver\"]).strip().lower()\n            if n.get(\"target\"):\n                step[\"target\"] = str(n[\"target\"]).strip()\n        else:\n            raise ValueError(f\"unknown node type {kind!r} for node {n.get('id')!r}\")\n        steps.append(step)",
+      "existing_code": "        elif kind == \"output\":\n            step[\"keys\"] = after\n            # Delivery is optional: an output that only collects stays exactly as before.\n            if n.get(\"deliver\"):\n                step[\"deliver\"] = str(n[\"deliver\"]).strip().lower()\n            if n.get(\"target\"):\n                step[\"target\"] = str(n[\"target\"]).strip()\n        steps.append(step)",
+      "start_line": 78,
+      "end_line": 85,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/live_approval.py",
+      "content": "Hardcoded developer-machine absolute path makes the script non-portable. On any other host /home/lenovo/... does not exist, the sys.path insert is a no-op and the following visual_workflow_hermes imports fail with ModuleNotFoundError. Derive the repo root from the file location (e.g. Path(__file__).resolve().parents[1]) or an env var instead of a personal home directory.",
+      "suggestion_code": "from pathlib import Path\n_REPO = str(Path(__file__).resolve().parents[1])\nif _REPO not in sys.path:\n    sys.path.insert(0, _REPO)",
+      "existing_code": "_REPO = \"/home/lenovo/Development/Hermes-Workflow\"\nif _REPO not in sys.path:\n    sys.path.insert(0, _REPO)",
+      "start_line": 13,
+      "end_line": 15,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/live_approval.py",
+      "content": "Side-effectful workflow runs at import time with no `if __name__ == \"__main__\"` guard. Importing this module (e.g. for lint, tests, or reuse of `graph`/`NAME`) validates, overwrites the saved design, creates a run, persists state, and calls run_plan. Wrap the validate/save/run/print sequence in a `def main():` guarded by `if __name__ == \"__main__\":` (this also avoids `sys.exit(2)` firing on import).",
+      "suggestion_code": "def main() -\u003e None:\n    errors = validate_designer_graph(graph)\n    if errors:\n        print(\"INVALID GRAPH:\", json.dumps(errors, indent=1))\n        sys.exit(2)\n    DesignStore().save(NAME, graph)\n    plan = build_run_plan(graph)\n    ...\n\nif __name__ == \"__main__\":\n    main()",
+      "existing_code": "errors = validate_designer_graph(graph)\nif errors:\n    print(\"INVALID GRAPH:\", json.dumps(errors, indent=1))\n    sys.exit(2)\n\nDesignStore().save(NAME, graph)\nplan = build_run_plan(graph)",
+      "start_line": 45,
+      "end_line": 51,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/channels.py",
+      "content": "Home channel is gated on `found`, so a platform with zero/ all-invalid entries yields zero targets. That contradicts the comment directly above it ('Discovery may simply not have seen a chat yet') and the module docstring (`telegram` home channel is always a target). A fresh platform (`{\"platforms\": {\"telegram\": []}}`) incorrectly reports `available: False`. Append the home entry unconditionally for every messaging platform.",
+      "suggestion_code": "        # A platform the gateway has traffic for implies a configured bot, so its home channel\n        # is a real target. Discovery may simply not have seen a chat yet.\n        # Always expose home, even when no chats were discovered yet.\n        if True:",
+      "existing_code": "        # A platform the gateway has traffic for implies a configured bot, so its home channel\n        # is a real target. Discovery may simply not have seen a chat yet.\n        if found:",
+      "start_line": 81,
+      "end_line": 83,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/channels.py",
+      "content": "Explicit `home` argument is silently ignored on the primary path: `load_directory()` is called with no arguments, so `list_delivery_targets(custom_home)` / `list_host_channels(custom_home)` still read live host data instead of the requested directory. Only the on-disk fallback honors `home`. This breaks test isolation and any multi-home tooling. When `home is not None`, use the file fallback (or pass `home` through to `load_directory` if it supports it).",
+      "suggestion_code": "        from gateway.channel_directory import load_directory\n        import inspect\n        if home is not None:\n            # Caller asked for a specific directory; don't read live host state.\n            raise ImportError(\"explicit home requested; use on-disk fallback\")\n        data = load_directory()",
+      "existing_code": "        from gateway.channel_directory import load_directory\n\n        data = load_directory()",
+      "start_line": 40,
+      "end_line": 42,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/split_patch.py",
+      "content": "FILE_RE uses \\S+ so `diff --git` lines with spaces or quoted paths (git quotes as `\"a/foo bar\" \"b/foo bar\"`) never match. Those files fall through to the `?? unhandled line` branch and their hunks are silently lost.",
+      "suggestion_code": "FILE_RE = re.compile(r'^diff --git \"?a/(.+?)\"? \"?b/(.+?)\"?$')",
+      "existing_code": "FILE_RE = re.compile(r\"^diff --git a/(\\S+) b/(\\S+)$\")",
+      "start_line": 32,
+      "end_line": 32,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/split_patch.py",
+      "content": "Only `index /---/+++` lines are kept as file header. Other pre-hunk metadata (`new file mode`, `deleted file mode`, `old/new mode`, `similarity index`, `rename from/to`, `copy from/to`, `Binary files ... differ`, `GIT binary patch`) hits the `else` unhandled branch and is dropped. Output patches for renames/new/deleted/binary files are then corrupt/incomplete.",
+      "suggestion_code": "        elif not size:\n            # Preserve all pre-hunk metadata: new/deleted file mode, rename/copy, similarity, binary markers.\n            header.append(line)",
+      "existing_code": "        elif line.startswith(\"index \") or line.startswith(\"--- \") or line.startswith(\"+++ \"):\n            header.append(line)",
+      "start_line": 44,
+      "end_line": 45,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/delivery.py",
+      "content": "render_text can raise on non-JSON-serializable dict values, breaking deliver_output's documented never-raises / never-fails-the-run contract. `json.dumps` raises TypeError (e.g. set/bytes/datetime/custom object, circular refs) which is not caught here and `deliver_output` calls `render_text` without a guard, so one bad upstream value fails delivery with an exception instead of a recorded `{ok: False}` outcome.",
+      "suggestion_code": "            if isinstance(value, str):\n                text = value\n            else:\n                try:\n                    text = json.dumps(value, ensure_ascii=False)\n                except (TypeError, ValueError):\n                    text = str(value)",
+      "existing_code": "            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)",
+      "start_line": 33,
+      "end_line": 33,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/delivery.py",
+      "content": "Non-JSON string returned by the seam is discarded: the `json.loads` fallback replaces it with `{}`, so the follow-up `detail` becomes generic 'send failed' and the original `raw` error text is lost for canvas display/debugging.",
+      "suggestion_code": "        try:\n            data = json.loads(raw or \"{}\")\n        except (ValueError, TypeError):\n            data = {\"error\": raw} if raw else {}",
+      "existing_code": "        try:\n            data = json.loads(raw or \"{}\")\n        except (ValueError, TypeError):\n            data = {}",
+      "start_line": 57,
+      "end_line": 60,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/models.py",
+      "content": "Cached payload is returned by reference, so any caller that mutates the returned dict (e.g. `providers.append`, `providers[0]['models'].append`, `current['model']=...`) permanently poisons `_cache` for all later callers until TTL expiry / `clear_cache()`. Both the hit path (`return _cache[1]`) and the miss path (`return payload` where `payload` is the same object just stored) alias the cached object, including nested lists/dicts.",
+      "suggestion_code": "    import copy  # top of module\n    if not refresh and _cache is not None and time.monotonic() - _cache[0] \u003c _CACHE_TTL_S:\n        return copy.deepcopy(_cache[1])\n    payload = _read_catalog()\n    _cache = (time.monotonic(), payload)\n    return copy.deepcopy(payload)",
+      "existing_code": "    if not refresh and _cache is not None and time.monotonic() - _cache[0] \u003c _CACHE_TTL_S:\n        return _cache[1]\n    payload = _read_catalog()\n    _cache = (time.monotonic(), payload)\n    return payload",
+      "start_line": 35,
+      "end_line": 39,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/split_patch.py",
+      "content": "Over-escaped `role=\\\\\\\\?\\\"status` requires at least one literal backslash before the quote, so plain `role=\"status\"` (normal JSX) never matches and those hunks fall to `rest`. Intent was an optional backslash to cover both `role=\"status\"` and escaped `role=\\\"status\\\"`.",
+      "suggestion_code": "        r\"banner|is not saved|Validate failed|Run failed|paused|aria-live|role=\\\\?\\\"status\"),",
+      "existing_code": "        r\"banner|is not saved|Validate failed|Run failed|paused|aria-live|role=\\\\\\\\?\\\"status\"),",
+      "start_line": 0,
+      "end_line": 0,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/split_patch.py",
+      "content": "OUT.mkdir(exist_ok=True) without clearing stale outputs leaves previous `*.patch` files in place. If a bucket has zero hunks on this run, the old file remains and looks like current output, causing wrong review/revert.",
+      "suggestion_code": "    OUT.mkdir(exist_ok=True)\n    for p in OUT.glob(\"*.patch\"):\n        p.unlink()",
+      "existing_code": "    OUT.mkdir(exist_ok=True)",
+      "start_line": 66,
+      "end_line": 66,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/__init__.py",
+      "content": "Stale 'four tools' count in two places: the module header and the register() docstring both say four tools (save/load/validate/run) but register() actually exposes five tools including workflow_design_respond / _RESPOND_SCHEMA. Update both to say five to avoid misleading review of the tool surface.",
+      "suggestion_code": "  - five tools (save/load/validate/run/respond) wrapping the design store and run plan.",
+      "existing_code": "  - four tools (save/load/validate/run) wrapping the design store and run plan.",
+      "start_line": 5,
+      "end_line": 5,
+      "category": "documentation",
+      "severity": "low"
+    },
+    {
+      "path": "visual_workflow_hermes/__init__.py",
+      "content": "required lists only run_id/node_id, so a resume with neither answer nor structured passes schema validation. Runtime then falls back to answer=None (structured else answer) and resume_plan stores None as the agent-step output and advances the run — silent corruption. For approval steps with options it only fails later with a confusing round-trip. Enforce at least one payload field in the schema.",
+      "suggestion_code": "        \"required\": [\"run_id\", \"node_id\"],\n        \"anyOf\": [{\"required\": [\"answer\"]}, {\"required\": [\"structured\"]}],",
+      "existing_code": "        \"required\": [\"run_id\", \"node_id\"],",
+      "start_line": 122,
+      "end_line": 122,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/profiles.py",
+      "content": "profile_choice and step_model crash on non-string input instead of degrading to None: (name or '').strip(), (step.get('model') or '').strip() and profile_choice(step.get('profile','')) assume str, so int model/profile (e.g. {'model':123}) from unvalidated workflow JSON raises AttributeError. Guard both paths plus chosen.get('model') with isinstance/str coercion to return None for unexpected types, per the module's failure-tolerant contract.",
+      "suggestion_code": "    if not isinstance(name, str):\n        return None\n    wanted = name.strip()\n    if not wanted:\n        return None",
+      "existing_code": "    wanted = (name or \"\").strip()\n    if not wanted:\n        return None",
+      "start_line": 56,
+      "end_line": 58,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/schema.py",
+      "content": "Node `id` is never required to be a non-empty string. `ids` collects raw `n.get('id')` (None when missing) while `nid` defaults to `\"\"`, so a missing/empty/non-string id passes uniqueness and later breaks dependency (`dep not in ids`) and cycle (`next(... id == nid)`) resolution with ambiguous `node: \"\"` errors. Worse, `set(ids)` / `{n.get('id')...}` raises `TypeError` on unhashable ids (e.g. `{\"id\": []}`) instead of returning a defect.",
+      "suggestion_code": "    ids: list = []\n    for n in nodes:\n        if not isinstance(n, dict):\n            continue\n        nid0 = n.get(\"id\")\n        if not isinstance(nid0, str) or not nid0.strip():\n            errors.append({\"node\": str(nid0 or \"\"), \"field\": \"id\", \"msg\": \"node id must be a non-empty string\"})\n            continue\n        ids.append(nid0)",
+      "existing_code": "    ids = [n.get(\"id\") for n in nodes if isinstance(n, dict)]",
+      "start_line": 61,
+      "end_line": 61,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/schema.py",
+      "content": "Non-list `nodes` crashes the validator. `graph.get(\"nodes\", [])` is used without a type check, so `{\"nodes\": 123}` raises `TypeError` at `len(nodes)` instead of returning a defect; a dict/str `nodes` iterates keys/chars and yields misleading per-node errors.",
+      "suggestion_code": "    nodes = graph.get(\"nodes\", [])\n    if not isinstance(nodes, list):\n        return [{\"node\": \"\", \"field\": \"nodes\", \"msg\": \"nodes must be a list\"}]",
+      "existing_code": "    nodes = graph.get(\"nodes\", [])",
+      "start_line": 52,
+      "end_line": 52,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/schema.py",
+      "content": "`after` is assumed to be a list. A string iterates per-character (e.g. `after=\"ab\"` reports unknown dependency `'a'`, `'b'`), while an int/dict raises `TypeError` (`'int' object is not iterable`) and an unhashable element (list/dict) raises `TypeError` on `dep in note_ids` set lookup — all instead of a clean defect.",
+      "suggestion_code": "        raw_after = n.get(\"after\", []) or []\n        if not isinstance(raw_after, list):\n            errors.append({\"node\": nid, \"field\": \"after\", \"msg\": \"after must be a list of node ids\"})\n            continue\n        for dep in raw_after:\n            if not isinstance(dep, str):\n                errors.append({\"node\": nid, \"field\": \"after\", \"msg\": f\"unknown dependency {dep!r}\"})\n                continue",
+      "existing_code": "        for dep in n.get(\"after\", []) or []:",
+      "start_line": 97,
+      "end_line": 97,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/schema.py",
+      "content": "Same unchecked `after` assumption is repeated in the DFS. If the per-node loop above is fixed to record a defect instead of crashing, this loop must also guard against non-list `after`; otherwise a graph that reaches cycle detection with a malformed edge still raises `TypeError`.",
+      "suggestion_code": "            raw = (node.get(\"after\", []) if node else []) or []\n            if not isinstance(raw, list):\n                continue\n            for dep in raw:",
+      "existing_code": "            for dep in (node.get(\"after\", []) if node else []) or []:",
+      "start_line": 169,
+      "end_line": 169,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/schema.py",
+      "content": "No reachability / source check: only exactly-one-trigger plus cycle detection is enforced. A trigger with non-empty `after` (trigger must be the source) passes, and orphan/disconnected subgraphs that never execute (no transitive dependency on the trigger) pass as valid.",
+      "suggestion_code": "    triggers = [n for n in nodes if isinstance(n, dict) and n.get(\"type\") == \"trigger\"]\n    # after validation \u0026 cycle check, add:\n    # - reject trigger with non-empty `after` (trigger is the source)\n    # - require every non-trigger, non-note node to transitively depend on the trigger id",
+      "existing_code": "    triggers = [n for n in nodes if isinstance(n, dict) and n.get(\"type\") == \"trigger\"]",
+      "start_line": 66,
+      "end_line": 66,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/schema.py",
+      "content": "Condition references are only syntax-checked. `_WHEN_RE` enforces `out.\u003c...\u003e \u003cop\u003e \u003cliteral\u003e` shape but never verifies the referenced node exists, is not a note, or is actually upstream (in the `after` closure). A dangling `out.missing.field == 1` therefore passes validation and fails mid-run, contradicting the stated design-time-fail intent. The regex also accepts single-component `out.foo` though the spec requires `out.\u003cnode\u003e.\u003cfield\u003e`.",
+      "suggestion_code": "        if kind == \"condition\" and n.get(\"expression\"):\n            m = _WHEN_RE.match(str(n[\"expression\"]).strip())\n            if not m:\n                errors.append({\"node\": nid, \"field\": \"expression\", \"msg\": \"expression must look like 'out.\u003cnode\u003e.\u003cfield\u003e \u003cop\u003e \u003cvalue\u003e' (op: == != \u003e \u003e= \u003c \u003c=)\"})\n            else:\n                ref = str(n[\"expression\"]).strip().split()[0]  # out.\u003cnode\u003e.\u003c...\u003e\n                ref_node = ref.split(\".\")[1] if \".\" in ref else \"\"\n                if ref_node not in ids:\n                    errors.append({\"node\": nid, \"field\": \"expression\", \"msg\": f\"unknown node {ref_node!r} in expression\"})",
+      "existing_code": "        if kind == \"condition\" and n.get(\"expression\") \\\n                and not _WHEN_RE.match(str(n[\"expression\"]).strip()):",
+      "start_line": 152,
+      "end_line": 153,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/schema.py",
+      "content": "`int(retries)` silently truncates floats (`int(2.5) == 2`) and accepts bools (`int(True) == 1`), so a non-integral JSON number passes the `0..MAX_RETRIES` range check. Same pattern applies to `timeout_minutes` below. Reject non-integral values instead of coercing.",
+      "suggestion_code": "                    if isinstance(retries, bool) or not float(retries).is_integer():\n                        raise ValueError\n                    count = int(float(retries))",
+      "existing_code": "                    count = int(retries)",
+      "start_line": 125,
+      "end_line": 125,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/runtime.py",
+      "content": "_describe() drops validation failures. tool_run() returns {\"ok\": False, \"errors\": [...]} with no \"error\"/\"status\"/\"run_id\" on schema failure, but this only checks `error`. The result falls through to `run None: None / outputs: (none)` instead of showing problems.",
+      "suggestion_code": "    def _describe(self, result: dict) -\u003e str:\n        \"\"\"Render a tool result as chat text, including the exact resume command.\"\"\"\n        if not result.get(\"ok\"):\n            if result.get(\"error\"):\n                return f\"run failed: {result['error']}\"\n            problems = result.get(\"errors\") or []\n            if problems:\n                detail = \"\\n\".join(f\"  {e.get('node') or '-'}:{e.get('field')}: {e.get('msg')}\" for e in problems)\n                return f\"validation failed:\\n{detail}\"\n            if result.get(\"status\") is None:\n                return f\"run failed: {result.get('error') or result.get('errors') or 'unknown error'}\"",
+      "existing_code": "    def _describe(self, result: dict) -\u003e str:\n        \"\"\"Render a tool result as chat text, including the exact resume command.\"\"\"\n        if not result.get(\"ok\") and result.get(\"error\"):",
+      "start_line": 188,
+      "end_line": 190,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/runtime.py",
+      "content": "tool_run() execution path is unguarded. Only build_run_plan() is inside try/except; new_state() (KeyError on missing plan[\"name\"]), RunStore.save() (OSError) and run_plan() (spawn/on_step raising non-StepError) raise into the dispatcher, breaking the plain-dict contract that _tool_run_retry() upholds.",
+      "suggestion_code": "        try:\n            plan = build_run_plan(designer)\n            run_id = uuid.uuid4().hex[:12]\n            state = new_state(plan, run_id)\n            self._runs().save(state)\n            state = run_plan(plan, state, spawn=_subagent_spawn(self.ctx),\n                             on_step=self._runs().save, deliver=_deliver)\n        except (StepError, ValueError, FileNotFoundError, OSError, KeyError) as exc:\n            return {\"ok\": False, \"error\": str(exc)}\n        return self._result(state)",
+      "existing_code": "        run_id = uuid.uuid4().hex[:12]\n        state = new_state(plan, run_id)\n        self._runs().save(state)\n        state = run_plan(plan, state, spawn=_subagent_spawn(self.ctx),\n                         on_step=self._runs().save, deliver=_deliver)\n        return self._result(state)",
+      "start_line": 292,
+      "end_line": 297,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/runtime.py",
+      "content": "Both _tool_run_retry() and tool_respond() assume state has 'name': state['name'] is outside the guarded (StepError, ValueError, FileNotFoundError) set, so KeyError on a corrupt/truncated run record crashes the dispatcher instead of returning {'ok': False, 'error': ...}. Include KeyError / broaden handling to return an error dict in both methods.",
+      "suggestion_code": "            name = state.get(\"name\")\n            if not name:\n                return {\"ok\": False, \"error\": f\"run {run_id!r} record is corrupt: missing 'name'\"}\n            plan = build_run_plan(self._store().load(name))\n            state = retry_failed(plan, state, spawn=_subagent_spawn(self.ctx),\n                                 on_step=self._runs().save, deliver=_deliver)\n        except (StepError, ValueError, FileNotFoundError, KeyError) as exc:",
+      "existing_code": "            plan = build_run_plan(self._store().load(state[\"name\"]))\n            state = retry_failed(plan, state, spawn=_subagent_spawn(self.ctx),\n                                 on_step=self._runs().save, deliver=_deliver)\n        except (StepError, ValueError, FileNotFoundError) as exc:",
+      "start_line": 319,
+      "end_line": 322,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/spawn.py",
+      "content": "Unknown-model check shadows auth errors: any message containing 'not found' returns early, so an auth failure like 'api key not found' (matches both 'not found' and 'api key') is recorded as 'unknown model' with the wrong remediation (fix Model field instead of key). The auth test runs after, so it never fires for overlapping text.",
+      "suggestion_code": "    if (\"401\" in text or \"403\" in text or \"api key\" in text\n            or \"unauthorized\" in text or \"authentication\" in text):\n        return {\"kind\": \"auth failed\", ...}\n    if \"does not exist\" in text or \"not found\" in text or \"decommissioned\" in text:\n        return {\"kind\": \"unknown model\", ...}\n    # Or narrow unknown-model to require model context, e.g. 'model' in text.",
+      "existing_code": "    if \"does not exist\" in text or \"not found\" in text or \"decommissioned\" in text:\n        return {\"kind\": \"unknown model\",\n                \"why\": \"the provider has no model by that id — fix the step's Model field\"}",
+      "start_line": 40,
+      "end_line": 42,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/spawn.py",
+      "content": "PermissionError catch-all misattributes unrelated failures: every PermissionError (including OSError from filesystem/network inside the backend) is reported as a trust-refusal/allow_model_override issue. Only PluginLlmTrustError should map to that remediation.",
+      "suggestion_code": "    if type(exc).__name__ == \"PluginLlmTrustError\" or (\n        isinstance(exc, PermissionError) and \"allow_model_override\" in str(exc)\n    ):\n        return {\n            \"kind\": \"trust refusal\",",
+      "existing_code": "    if isinstance(exc, PermissionError):\n        return {\n            \"kind\": \"trust refusal\",",
+      "start_line": 32,
+      "end_line": 34,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/spawn.py",
+      "content": "Broad except around PluginLlm construction hides init failures: catching Exception over both the import and PluginLlm(...) turns configuration/runtime init errors into silent None ('no backend') with no log, instead of a diagnosable failure. Only a missing host should yield None.",
+      "suggestion_code": "        try:\n            from agent.plugin_llm import PluginLlm\n        except ImportError:  # host absent (unit tests, plain tooling)\n            return None\n        llm = PluginLlm(plugin_id=plugin_id)",
+      "existing_code": "        try:\n            from agent.plugin_llm import PluginLlm\n\n            llm = PluginLlm(plugin_id=plugin_id)\n        except Exception:  # host absent (unit tests, plain tooling) or the repository moved\n            return None",
+      "start_line": 76,
+      "end_line": 81,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/spawn.py",
+      "content": "Overbroad connection signals: 'temporarily' (and 'resolve') match unrelated messages (e.g. 'temporarily blocked for policy', 'to resolve, check...') and misclassify them as 'connection problem' with retry-the-network advice. Drop generic tokens or require network context.",
+      "suggestion_code": "    if (\"connection\" in text or \"econnrefused\" in text or \"getaddrinfo\" in text\n            or \"reset by peer\" in text or \"unable to reach\" in text):",
+      "existing_code": "    if (\"connection\" in text or \"econnrefused\" in text or \"getaddrinfo\" in text\n            or \"resolve\" in text or \"reset by peer\" in text or \"temporarily\" in text\n            or \"unable to reach\" in text):",
+      "start_line": 54,
+      "end_line": 56,
+      "category": "bug",
+      "severity": "low"
+    },
+    {
+      "path": "visual_workflow_hermes/spawn.py",
+      "content": "Overrides always send None/empty, contradicting the 'only when the step names one' contract: {'model': None, 'timeout': None, 'purpose': ''} is still passed as kwargs. On a fail-closed host gate keyed off key presence, an explicit model=None can trip allow_model_override even with no override.",
+      "suggestion_code": "        overrides: dict = {}\n        if model:\n            overrides[\"model\"] = model\n        if step.get(\"timeout\") is not None:\n            overrides[\"timeout\"] = step.get(\"timeout\")\n        if audit:\n            overrides[\"purpose\"] = audit",
+      "existing_code": "        overrides = {\"model\": model or None, \"timeout\": step.get(\"timeout\"),\n                     \"purpose\": audit}",
+      "start_line": 103,
+      "end_line": 104,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/triggers.py",
+      "content": "Unescaped `name` interpolated into generated cron prompt breaks correctness and enables prompt-instruction injection. A name containing `\"`, `\\`, newline, or `'` breaks the quoted `'{name}'` text and the `{\"name\": \"{name}\"}` JSON example (e.g. name `a\"}, evil` produces invalid/misleading JSON for the cron agent to copy). A name containing newlines/instructions (e.g. `x'\\nIgnore previous instructions...`) is executed by the fresh cron agent as instructions. Use `json.dumps(name)` for both interpolations so quoting/escaping is correct.",
+      "suggestion_code": "import json  # top of file\n    safe_name = json.dumps(name)\n    prompt = (\n        f\"Run the saved Hermes workflow design {safe_name}.\\n\"\n        f\"1. Call workflow_design_run with {{\\\"name\\\": {safe_name}}}.\\n\"",
+      "existing_code": "    prompt = (\n        f\"Run the saved Hermes workflow design '{name}'.\\n\"\n        f\"1. Call workflow_design_run with {{\\\"name\\\": \\\"{name}\\\"}}.\\n\"",
+      "start_line": 40,
+      "end_line": 42,
+      "category": "security",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/store.py",
+      "content": "Non-atomic saves in both DesignStore.save and RunStore.save expose torn JSON to concurrent readers: path.write_text() truncates then streams, so readers (see RunStore.recent() corrupt-file handling) can observe half-written files; RunStore is worse due to frequent pause/resume writes and crash-consistency loss. Write to a temp file in the same directory and os.replace() it in both methods.",
+      "suggestion_code": "        path = self._path(name)\n        import tempfile\n        fd, tmp_name = tempfile.mkstemp(dir=str(self.root), prefix=path.name, suffix=\".tmp\")\n        try:\n            with os.fdopen(fd, \"w\", encoding=\"utf-8\") as f:\n                f.write(json.dumps(graph, indent=2) + \"\\n\")\n            os.replace(tmp_name, path)\n        except BaseException:\n            try:\n                os.unlink(tmp_name)\n            except OSError:\n                pass\n            raise\n        return path",
+      "existing_code": "        path = self._path(name)\n        path.write_text(json.dumps(graph, indent=2) + \"\\n\")\n        return path",
+      "start_line": 43,
+      "end_line": 45,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/store.py",
+      "content": "RunStore.save bypasses the `_RUN_ID_RE -\u003e ValueError` contract: `state[\"run_id\"]` raises `KeyError` when absent, and a non-str id (e.g. `None`/`int`) raises `TypeError` inside `re.match` instead of `ValueError`. Callers expecting `ValueError` for a bad id will miss it. Validate explicitly.",
+      "suggestion_code": "    def save(self, state: dict) -\u003e Path:\n        run_id = state.get(\"run_id\") if isinstance(state, dict) else None\n        if not isinstance(run_id, str):\n            raise ValueError(f\"bad run id {run_id!r}\")\n        path = self._path(run_id)",
+      "existing_code": "    def save(self, state: dict) -\u003e Path:\n        path = self._path(state[\"run_id\"])",
+      "start_line": 76,
+      "end_line": 77,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/store.py",
+      "content": "Both DesignStore.load and RunStore.load leak low-level decode errors and have a check-then-act race: exists() + read_text()/json.loads() lets torn writes or concurrent delete/modify surface as raw JSONDecodeError/UnicodeDecodeError/FileNotFoundError instead of a domain error with context. Wrap both with context preserving cause (distinguishing missing vs corrupt), consistent with recent() which already tolerates corrupt files.",
+      "suggestion_code": "    def load(self, name: str) -\u003e dict:\n        path = self._path(name)\n        try:\n            return json.loads(path.read_text(encoding=\"utf-8\"))\n        except FileNotFoundError:\n            raise FileNotFoundError(f\"no saved workflow named {name!r}\") from None\n        except (OSError, ValueError) as err:\n            raise ValueError(f\"corrupt workflow file {name!r}: {err}\") from err",
+      "existing_code": "    def load(self, name: str) -\u003e dict:\n        path = self._path(name)\n        if not path.exists():\n            raise FileNotFoundError(f\"no saved workflow named {name!r}\")\n        return json.loads(path.read_text())",
+      "start_line": 47,
+      "end_line": 51,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/schedule.py",
+      "content": "Redundant step guard is dead code: after `if not low \u003c= int(part) \u003c= high: return False`, `int(part) \u003e high` can never be true, so `if step != 1 and int(part) \u003e high` never fires. Confirm intended step validation (e.g. step range) or remove it.",
+      "suggestion_code": "        if not low \u003c= int(part) \u003c= high:\n            return False",
+      "existing_code": "        if not low \u003c= int(part) \u003c= high:\n            return False\n        if step != 1 and int(part) \u003e high:\n            return False",
+      "start_line": 92,
+      "end_line": 95,
+      "category": "maintainability",
+      "severity": "low"
+    },
+    {
+      "path": "visual_workflow_hermes/schedule.py",
+      "content": "Validator allows day-of-week 0-7 (both 0 and 7 are Sunday) but describe map only builds keys 0-6, so valid `* * * * 7` falls through to generic `Cron ...` instead of `Every Sunday at ...`. Add the 7 alias.",
+      "suggestion_code": "    days = {str((i + 1) % 7): name.title() for i, name in enumerate(WEEKDAYS)}\n    days[\"7\"] = days[\"0\"]",
+      "existing_code": "    days = {str((i + 1) % 7): name.title() for i, name in enumerate(WEEKDAYS)}",
+      "start_line": 130,
+      "end_line": 130,
+      "category": "bug",
+      "severity": "low"
+    },
+    {
+      "path": "visual_workflow_hermes/schedule.py",
+      "content": "Unstripped design name misses the update path: `job_name`/`design_of_job` strip whitespace but `schedule_design` compares raw `designer.get(\"name\", \"\")` against stripped `j[\"design\"]`. A padded name (e.g. `\" run \"`) never matches its existing job, so a duplicate is created instead of updating. Strip once and reuse.",
+      "suggestion_code": "    name = (designer.get(\"name\", \"\") or \"\").strip()\n    existing = next(\n        (j for j in list_workflow_jobs()[\"jobs\"] if j[\"design\"] == name), None\n    )",
+      "existing_code": "    existing = next(\n        (j for j in list_workflow_jobs()[\"jobs\"] if j[\"design\"] == name), None\n    )",
+      "start_line": 239,
+      "end_line": 241,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "visual_workflow_hermes/runner.py",
+      "content": "Falsy `structured` outputs are lost: `or` discards legitimate 0/False/[]/{} and stores `output` (or \"\") instead. An agent returning e.g. `{\"structured\": 0}` or `{\"structured\": False}` silently becomes \"\". Check key presence instead of truthiness.",
+      "suggestion_code": "                state[\"outputs\"][sid] = produced[\"structured\"] if \"structured\" in produced else produced.get(\"output\", \"\")",
+      "existing_code": "                state[\"outputs\"][sid] = produced.get(\"structured\") or produced.get(\"output\", \"\")",
+      "start_line": 225,
+      "end_line": 225,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/runner.py",
+      "content": "Approval timeout parsing can leave a half-paused state: `state[\"status\"]` is set to `awaiting_approval` before `int(timeout_minutes)` is validated, and `int()` raises ValueError/TypeError (not StepError) so it bypasses the `except StepError` failed-state/on_step handling. Status then claims `awaiting_approval` while `pending` was never assigned. Validate/wrap the timeout before mutating status.",
+      "suggestion_code": "                if step.get(\"timeout_minutes\"):\n                    try:\n                        pending[\"timeout_minutes\"] = int(step[\"timeout_minutes\"])\n                    except (TypeError, ValueError) as exc:\n                        raise StepError(f\"bad timeout_minutes {step.get('timeout_minutes')!r}: {exc}\") from exc",
+      "existing_code": "                if step.get(\"timeout_minutes\"):\n                    pending[\"timeout_minutes\"] = int(step[\"timeout_minutes\"])",
+      "start_line": 241,
+      "end_line": 242,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/runner.py",
+      "content": "Non-StepError from `spawn` escapes without a failed-state record: both `_spawn_with_retries` and `run_plan` only catch `StepError`, so a RuntimeError/ConnectionError/AttributeError (e.g. spawn raising directly, or returning a non-dict so `.get` raises) propagates with `status` still `running`, cursor unadvanced, no `error` and no `on_step` persistence. The run then looks in-flight and is not retryable. Map unexpected spawn failures into the failed verdict.",
+      "suggestion_code": "            try:\n                produced = spawn(step, state[\"outputs\"], state) or {}\n            except StepError:\n                raise\n            except Exception as exc:\n                raise StepError(f\"agent step failed: {exc}\") from exc",
+      "existing_code": "            produced = spawn(step, state[\"outputs\"], state) or {}",
+      "start_line": 167,
+      "end_line": 167,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "dashboard/plugin_api.py",
+      "content": "Overbroad `except Exception` around `get_hermes_home()` masks real failures and silently splits storage. Import failure (host not importable) is expected and should fall back, but an exception raised *inside* `get_hermes_home()` (misconfiguration, permission error) is also swallowed and designs/runs are then written under `$HERMES_HOME`/`~/.hermes` instead of the profile-scoped home, making runs/designs appear to vanish.",
+      "suggestion_code": "    try:\n        from hermes_constants import get_hermes_home\n    except ImportError:\n        return Path(os.environ.get(\"HERMES_HOME\") or (Path.home() / \".hermes\"))\n    return Path(get_hermes_home())",
+      "existing_code": "    try:\n        from hermes_constants import get_hermes_home\n\n        return Path(get_hermes_home())\n    except Exception:\n        return Path(os.environ.get(\"HERMES_HOME\") or (Path.home() / \".hermes\"))",
+      "start_line": 61,
+      "end_line": 66,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "dashboard/plugin_api.py",
+      "content": "Returning absolute server filesystem path (`str(path)`) leaks layout (`$HERMES_HOME/workflow-designs/...`, home dir) to API clients. Callers only need `name`/`nodes`; the path is never used by the canvas.",
+      "suggestion_code": "    return {\"ok\": True, \"name\": name, \"nodes\": len(graph.get(\"nodes\", []))}",
+      "existing_code": "    return {\"ok\": True, \"name\": name, \"path\": str(path), \"nodes\": len(graph.get(\"nodes\", []))}",
+      "start_line": 224,
+      "end_line": 224,
+      "category": "security",
+      "severity": "low"
+    },
+    {
+      "path": "visual_workflow_hermes/runner.py",
+      "content": "Resume advances by position without validating it points at the paused node, and accepts any non-approval kind as agent output. If the plan was edited (insert/reorder) between pause and resume, `cursor += 1` skips or repeats the wrong step while the lookup by `node_id` succeeds. Also a stale/corrupt `pending` pointing at a `condition`/`output` step is silently stored as output instead of raising. Resolve the cursor from the paused id (or assert `steps[cursor][\"id\"] == node_id`) and reject non-agent/non-approval kinds.",
+      "suggestion_code": "    elif step[\"kind\"] == \"agent\":\n        if state.get(\"cursor\") is not None and steps[state[\"cursor\"]][\"id\"] != node_id:\n            raise StepError(f\"paused step {node_id!r} is not at cursor {state.get('cursor')!r}\")\n        state[\"outputs\"][node_id] = answer\n    else:\n        raise StepError(f\"paused step {node_id!r} has unexpected kind {step['kind']!r}\")\n    state[\"cursor\"] = next(i for i, s in enumerate(plan[\"steps\"]) if s[\"id\"] == node_id) + 1",
+      "existing_code": "    else:\n        state[\"outputs\"][node_id] = answer\n    state[\"cursor\"] += 1",
+      "start_line": 358,
+      "end_line": 360,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/runner.py",
+      "content": "Dotted node ids break `inputs` refs while conditions support them. `evaluate_condition` does longest-prefix matching so ids may contain dots, but here `partition('.')` splits on the first dot, so ref `a.b.c` (node `a.b`, path `c`) is looked up as node `a` and raises spurious StepError. Reuse the same longest-prefix resolution as conditions.",
+      "suggestion_code": "        node = next((n for n in sorted(outputs, key=len, reverse=True) if ref == n or ref.startswith(f\"{n}.\")) , ref.partition(\".\")[0])\n        path = ref[len(node) + 1:] if ref != node else \"\"",
+      "existing_code": "        node, _, path = ref.partition(\".\")",
+      "start_line": 71,
+      "end_line": 71,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "visual_workflow_hermes/runner.py",
+      "content": "Only `StepError` is converted into a failed-state record, so any other exception (spawn returning a non-dict, `on_step`/`deliver` hook bug, `KeyError` on corrupt state/plan) propagates with `status` still `running`, no `error`, and no `on_step` persistence — the run looks in-flight and `retryable()` refuses it. Catch unexpected exceptions around the step body and record them as failure (or at least persist) instead of leaking a stuck `running` state.",
+      "suggestion_code": "        except StepError as exc:\n            state[\"status\"] = \"failed\"\n        except Exception as exc:  # hook/state/plan bug: record it, don't strand as running\n            state[\"status\"] = \"failed\"\n            state[\"error\"] = {\"node_id\": sid, \"msg\": f\"unexpected error: {exc!r}\"}\n            if on_step:\n                on_step(state)\n            return state",
+      "existing_code": "        except StepError as exc:\n            state[\"status\"] = \"failed\"",
+      "start_line": 257,
+      "end_line": 258,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/run_live_retry.sh",
+      "content": "Hardcoded absolute workdir `cd /home/lenovo/Development/Hermes-Workflow` breaks portability and fails open: without `set -e` / `|| exit` a failed `cd` (missing dir, different user/CI) silently runs `live_retry_server.py` from the wrong cwd, so relative path `.hermes/live_retry_server.py` resolves incorrectly.",
+      "suggestion_code": "SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" \u0026\u0026 pwd)\"\nREPO_ROOT=\"$(cd \"$SCRIPT_DIR/..\" \u0026\u0026 pwd)\"\ncd \"$REPO_ROOT\" || { echo \"failed to cd to $REPO_ROOT\" \u003e\u00262; exit 1; }",
+      "existing_code": "cd /home/lenovo/Development/Hermes-Workflow",
+      "start_line": 3,
+      "end_line": 3,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": ".hermes/run_live_retry.sh",
+      "content": "Unpinned ephemeral dependencies `--with fastapi --with uvicorn ...` with `--isolated --no-project` resolve floating latest versions on every launch. Hurts reproducibility and risks sudden breakage (fastapi/uvicorn API drift). Pin minimum-compatible versions or check in a lock/requirements file.",
+      "suggestion_code": "  --with 'fastapi==0.115.6' --with 'uvicorn==0.34.0' --with 'httpx==0.28.1' --with 'ruamel-yaml==0.18.6' \\",
+      "existing_code": "  --with fastapi --with uvicorn --with httpx --with ruamel-yaml \\",
+      "start_line": 5,
+      "end_line": 5,
+      "category": "maintainability",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/run_live_retry.sh",
+      "content": "Missing strict mode (`set -euo pipefail`): startup failures (e.g. `uv` missing, network failure fetching `--with` deps, failed `cd`) are masked, making probe failures hard to diagnose. Add strict mode right after shebang.",
+      "suggestion_code": "#!/usr/bin/env bash\nset -euo pipefail",
+      "existing_code": "#!/usr/bin/env bash",
+      "start_line": 1,
+      "end_line": 1,
+      "category": "other",
+      "severity": "medium"
+    },
+    {
+      "path": ".hermes/run_live_retry.sh",
+      "content": "No argument forwarding to probe server: `python3 .hermes/live_retry_server.py` drops `\"$@\"`, so callers cannot override port/host/config/retry options without editing the launcher. Append `\"$@\"` (requires `set -u` safe handling or explicit check).",
+      "suggestion_code": "  python3 .hermes/live_retry_server.py \"$@\"",
+      "existing_code": "  python3 .hermes/live_retry_server.py",
+      "start_line": 6,
+      "end_line": 6,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "pyproject.toml",
+      "content": "Installed wheel will miss runtime asset `widgets/designer.html`. `visual_workflow_hermes/runtime.py:_widget_hint()` builds `Path(__file__).parent.parent / \"widgets\" / \"designer.html\"`, i.e. it expects a sibling `widgets/` dir from the repo layout. But `packages = [\"visual_workflow_hermes\"]` excludes everything outside the package, and there is no `package-data`/`data-files` stanza, so a `python -m build` + `pip install` deployment has no `widgets/` to point at (and `parent.parent` traversal is layout-fragile even if it exists). Fix by moving the asset inside the package and loading via `importlib.resources`, e.g. `visual_workflow_hermes/widgets/designer.html` + `package-data`. Same line is also fragile for future subpackages: a hardcoded single entry silently drops any new `visual_workflow_hermes.\u003csub\u003e` from the wheel.",
+      "suggestion_code": "[tool.setuptools.packages.find]\nwhere = [\".\"]\ninclude = [\"visual_workflow_hermes*\"]\n[tool.setuptools.package-data]\nvisual_workflow_hermes = [\"widgets/*.html\"]",
+      "existing_code": "packages = [\"visual_workflow_hermes\"]",
+      "start_line": 20,
+      "end_line": 20,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "pyproject.toml",
+      "content": "`pythonpath = [\".\"]` makes tests validate the source tree, not the installable artifact. Tests will `import visual_workflow_hermes` from CWD even if `packages`, `package-data`, or future renames are wrong, so the packaging break above (and any future allowlist drift) passes locally and only fails after `uv sync`/wheel install at enable time. Keep it for dev convenience but add a CI job that builds the wheel, installs it into a clean venv, and runs pytest with an empty `pythonpath` (e.g. `python -m build \u0026\u0026 pip install dist/*.whl \u0026\u0026 pytest -o pythonpath=\"\"`).",
+      "suggestion_code": "# Keep for `pytest` from repo root, but CI must also test the built wheel:\n# python -m build \u0026\u0026 pip install dist/*.whl \u0026\u0026 pytest -o pythonpath=\"\"\npythonpath = [\".\"]",
+      "existing_code": "pythonpath = [\".\"]",
+      "start_line": 15,
+      "end_line": 15,
+      "category": "test",
+      "severity": "medium"
+    },
+    {
+      "path": "pyproject.toml",
+      "content": "`[project]` has no `readme`, `license`, or `dependencies` keys. Verified today that all imports under `visual_workflow_hermes/` are stdlib-only (json/os/pathlib/typing/time/operator/re/uuid/logging), so the missing `dependencies` is not currently a runtime break — but without an explicit `dependencies = []` plus `readme`/`license`, future third-party imports fail silently on clean installs and `uv build`/`twine check` emit missing-metadata warnings with no SBOM/license signal. Declare them explicitly.",
+      "suggestion_code": "requires-python = \"\u003e=3.10\"\nreadme = \"README.md\"\nlicense = { text = \"MIT\" }\ndependencies = []",
+      "existing_code": "requires-python = \"\u003e=3.10\"",
+      "start_line": 9,
+      "end_line": 9,
+      "category": "maintainability",
+      "severity": "low"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "content": "Job `ci` has no `timeout-minutes`. If pytest hangs or `hermes plugins validate/doctor` blocks on network, the run consumes runner minutes indefinitely. Set an explicit timeout (e.g. `timeout-minutes: 15`).",
+      "suggestion_code": "  ci:\n    runs-on: ubuntu-latest\n    timeout-minutes: 15",
+      "existing_code": "  ci:\n    runs-on: ubuntu-latest",
+      "start_line": 10,
+      "end_line": 11,
+      "category": "other",
+      "severity": "medium"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "content": "Workflow triggers on every `push` with no `concurrency` group, so rapid pushes to the same branch create overlapping redundant runs. Add `concurrency: { group: ${{ github.workflow }}-${{ github.ref }}, cancel-in-progress: true }` (or false for main).",
+      "suggestion_code": "on:\n  push\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: true",
+      "existing_code": "on:\n  push",
+      "start_line": 3,
+      "end_line": 4,
+      "category": "other",
+      "severity": "low"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "content": "`uv run --with ...` and `uv sync --project hermes-agent --frozen` reinstall on every run with no cache (no `astral-sh/setup-uv` cache or `actions/cache`). This increases runtime and flakiness. Enable caching via `astral-sh/setup-uv` with `enable-cache: true` / `cache-dependency-glob`.",
+      "suggestion_code": "      - name: Set up uv (with cache)\n        uses: astral-sh/setup-uv@v5\n        with:\n          enable-cache: true\n      - name: Install hermes-agent deps (frozen)\n        run: uv sync --project hermes-agent --frozen",
+      "existing_code": "      - name: Install hermes-agent deps (frozen)\n        run: uv sync --project hermes-agent --frozen",
+      "start_line": 29,
+      "end_line": 30,
+      "category": "performance",
+      "severity": "low"
+    },
+    {
+      "path": ".gitignore",
+      "content": "Missing ignore for secret files (.env, *.pem, credentials) risks accidental commit of credentials. No rule in this file prevents `git add .env` from staging secrets.",
+      "suggestion_code": ".pytest_cache/\n.env\n.env.*\n!.env.example\n*.pem\n*.key",
+      "existing_code": ".pytest_cache/",
+      "start_line": 4,
+      "end_line": 4,
+      "category": "security",
+      "severity": "high"
+    },
+    {
+      "path": ".gitignore",
+      "content": "Venv/build artifact coverage is too narrow: only `.venv/` is ignored. Common variants `venv/`, `build/`, `dist/`, `*.egg-info/`, `.coverage`, `htmlcov/`, `.tox/` will be committed unintentionally if generated.",
+      "suggestion_code": ".venv/\nvenv/\nENV/\nbuild/\ndist/\n*.egg-info/\n.coverage\nhtmlcov/\n.tox/\n.mypy_cache/\n.ruff_cache/",
+      "existing_code": ".venv/",
+      "start_line": 1,
+      "end_line": 1,
+      "category": "maintainability",
+      "severity": "medium"
+    }
+  ],
+  "project_summary": "### Top Issues\n- **Graph validation silently accepts corrupt plans — steps lost or run out of order**: `visual_workflow_hermes/convert.py` collapses duplicate/`None` ids via dict comprehension, drops dangling `after` with `if p in by_id`, and passes unknown/missing `type` through with no payload. `visual_workflow_hermes/schema.py` never requires non-empty string `id`, crashes on non-list `nodes` (`len(nodes)` `TypeError`), iterates string `after` per-character / raises on int/dict `after`, enforces no reachability/trigger-source check, and syntax-checks `out.*` conditions without existence/upstream checks. `int(retries)`/`timeout_minutes` truncation accepts `2.5`/`True`.\n- **Runner leaves runs stuck `running` or corrupts outputs**: `visual_workflow_hermes/runner.py` discards falsy `structured` (`0`/`False`/`[]`/`{}` via `or`), sets `awaiting_approval` before validating `int(timeout_minutes)` (`ValueError` bypasses `except StepError`), only catches `StepError` so `spawn`/hook/`KeyError` bugs propagate with no failed-state record, advances resume by `cursor += 1` without validating it still points at `node_id`, and splits dotted ids with `partition('.')` while `evaluate_condition` supports longest-prefix dots.\n- **Stores tear JSON and repair script repairs wrong place**: `visual_workflow_hermes/store.py` uses bare `write_text()` in `DesignStore.save`/`RunStore.save` (torn reads observed in `recent()`), `RunStore.save` raises `KeyError`/`TypeError` instead of documented `ValueError`, `load` has `exists()`+`read` race leaking `JSONDecodeError`/`UnicodeDecodeError`. `.hermes/repair_run_status.py` forces `~/.hermes` ignoring `HERMES_HOME`, only scans `recent(limit=200)`, aborts batch on one bad row (`OSError`/`AttributeError`/`KeyError`), can `KeyError`/orphan on `state['run_id']` mismatch, and runs on import (no `main()` guard).\n- **Hardcoded probe credential with fail-open defaults**: `.hermes/probe_item1.js`, `.hermes/probe_chain.js` (`TOK || 'probe-token-9119'` + `addInitScript` exposure), `.hermes/probe_run.js` commit `probe-token-9119` and silently authenticate when env is unset; `.gitignore` has no `.env`/`*.pem` rule to prevent further secret commits.\n- **Duplicated scheduler/edge logic wrong in 3+ copies**: `widgets/designer.html` + `desktop/plugin.js` both join edge id with `\u003e` then `split(\"\u003e\")[0:1]` (`a\u003eb -\u003e c` collides, `a\u003eb\u003ec` cut wrong). `designer.html:cronFieldOk` ignores `step[2..]` (`*/15/2` passes). `desktop/plugin.js:weekdayOf` off-by-one (`mon`=0 vs cron `0/7`=Sun), `presetOf` coerces `1,3`/steps to `weekly`, `scheduleForm` closes over stale `expression`, inspector vs Schedules form post different payload shapes (`{preset, cron}` vs `{preset,time,weekday,cron}`). `visual_workflow_hermes/schedule.py` has dead `step !=1` guard and drops valid `7` (Sunday) to generic `Cron ...` because describe map is `0-6`.\n- **Probe harness masks regressions and leaks browsers**: `.hermes/probe_chain.js` returns `[]` and exits `0` when `.vw-app` absent; `.hermes/probe_widget.js:measure()` returns `null` but caller logs success; `.hermes/probe_run.js` early-`return 0` when Run button missing. `.hermes/probe_item1.js`, `probe_widget.js`, `probe_run.js` only `browser.close()` on happy path. `click({force:true})` in `probe_shell.js`/`probe_chain.js`/`probe_widget.js`/`probe_wrap.js` bypasses actionability. Fixed `waitForTimeout(400-4000)` + `waitUntil:'networkidle'` in `probe_shell.js`/`probe_layout.js`/`probe_heights.js` races hydration/polling.\n- **Absolute machine-specific paths break every other host/CI**: `.hermes/probe_item1.js`, `probe_bisect.js`, `probe_heights.js`, `probe_widget.js`, `probe_run.js` (`require('/home/lenovo/...')`, `executablePath:'/usr/bin/google-chrome'`, `BASE http://127.0.0.1:9119`, `/tmp/*.png`), `.hermes/live_*.py`/`seam_probe.py`/`repair_run_status.py` (`sys.path.insert(0,'/home/lenovo/...')`), `.hermes/run_live_retry.sh` (`cd /home/lenovo/Development/Hermes-Workflow` without `set -e`).\n- **LLM spawn misattributes failures and violates override contract**: `visual_workflow_hermes/spawn.py` `not found` check shadows `api key not found` auth errors as unknown-model, every `PermissionError` reported as trust-refusal, `except Exception` around import+`PluginLlm(...)` hides init failures as `None`, `temporarily`/`resolve` substring matches misclassify policy messages as connection问题, and always sends `{'model':None,'timeout':None,'purpose':''}` despite “only when step names one”.\n- **Wheel misses runtime asset and tests cannot catch it**: `pyproject.toml` `packages=[\"visual_workflow_hermes\"]` omits sibling `widgets/designer.html` required by `visual_workflow_hermes/runtime.py:_widget_hint()`, while `pythonpath=[\".\"]` makes imports resolve to source tree; missing `readme`/`license`/`dependencies` (currently stdlib-only, unverified for future).\n\n### Module Hotspots\n- `.hermes/probe_*.js` (`probe_item1.js`, `probe_chain.js`, `probe_shell.js`, `probe_widget.js`, `probe_run.js`, `probe_heights.js`, `probe_layout.js`, `probe_wrap.js`, `probe_bisect.js`): highest density — credential, portability, flaky-wait, `force` click, leak, silent-pass, `SVGAnimatedString`, `slice` precedence, `dump()-\u003enull` in nearly every file.\n- `.hermes/live_*.py`, `seam_probe.py`, `repair_run_status.py`, `check_runs_route.py`, `live_diagnose_probe.py`: import-time live sends/mutations (`live_approval.py`, `live_agent_generate.py`, `seam_probe.py`), unguarded `spec_from_file_location`/`list_runs`/`res.json()`/`spawn(step,{})`, hardcoded `$HOME` paths.\n- `visual_workflow_hermes/schema.py`, `convert.py`, `runner.py`, `spawn.py`, `store.py`: core validation/execution/storage — all Top Issues 1-4,8 live here.\n- `widgets/designer.html`, `desktop/plugin.js`: duplicated canvas/inspector/scheduler — edge identity, cron, `savedNames`/`refreshDesigns` race, `#errors` overwrite, `TIPS[\"runs.approve\"]` undefined, inspector rebuild wiping focus, per-pixel full-SVG `draw()`, `weekdayOf`/`presetOf`/`describeCron`, `loadGraph` trust.\n\n### Cross-Cutting Concerns\n- **Non-portable hardcoding**: absolute `require`/`executablePath`/`BASE`/`file://`/`/tmp` screenshots in `.hermes/probe_*.js`; `sys.path` absolute inserts in `.hermes/seam_probe.py`, `live_approval.py`, `live_retry_server.py`, `repair_run_status.py`; hardcoded `cd` in `.hermes/run_live_retry.sh`. Representative: `.hermes/probe_bisect.js`, `.hermes/probe_heights.js`, `.hermes/probe_wrap.js`.\n- **Timing-flaky waits + masked actionability**: `waitForTimeout(400-4000)` + `networkidle` on polling pages, then `click({force:true})` on loose selectors (`svg g`, `g:has(rect)`). Representative: `.hermes/probe_shell.js`, `.hermes/probe_chain.js`, `.hermes/probe_layout.js`, `.hermes/probe_wrap.js`.\n- **Cleanup only on happy path / exit 0 on failure**: missing `try/finally` for `browser.close()` (`.hermes/probe_item1.js`, `probe_widget.js`, `probe_run.js`), `traceback.print_exc()` without non-zero exit (`.hermes/seam_probe.py`), unawaited `page.on('response', async...)` losing bodies (`.hermes/probe_run.js`), `network.length=0` race (`.hermes/probe_item1.js`).\n- **Overbroad or inverted error handling**: `except Exception` around `get_hermes_home()` splitting storage + leaking absolute path (`dashboard/plugin_api.py`), `except ImportError` masking inner failures (`__init__.py`), `article validateNow catch→local validateGraph` hiding 500/non-JSON (`widgets/designer.html`), `assert` on persisted state stripped under `python -O` (`.hermes/fix_probe_run.py`), `sys.path.insert(0)` order inversion (`live_retry_server.py`).\n- **Untrusted input trusted**: `loadGraph`/`layout`/`draw` without `Array.isArray` (`desktop/plugin.js`), `list_runs` row/`updated=int()` assumptions (`.hermes/check_runs_route.py`), `json.dumps` in `render_text` breaking `never-raises` + `json.loads` fallback discarding `raw` (`visual_workflow_hermes/delivery.py`), `name` unescaped into cron prompt (`visual_workflow_hermes/triggers.py`), cached `models.py` payload returned by reference (mutations poison cache).\n- **Type-coercion / null-deref shortcuts**: `Number(isoString)→NaN` (`ageText`/`waitText`), `f[0]` assumed numeric (`describeCron`), `String(svg.className)` → `[object SVGAnimatedString]` (`.hermes/probe_chain.js`), `.slice(0,40)` binding to ternary only (`.hermes/probe_heights.js`), `dump()-\u003enull` hiding which element missing (`.hermes/probe_shell.js`), unguarded `app.children` / `.vw-*` derefs (`.hermes/probe_layout.js`, `probe_bisect.js`).\n\n### Quick Wins\n- Fail fast when probe token missing instead of `|| 'probe-token-9119'`; read from `process.env.HERMES_PROBE_TOKEN` (`.hermes/probe_chain.js`, `probe_run.js`, `probe_item1.js`); add `.env`/`*.pem` to `.gitignore`.\n- Wrap probe runs in `try/finally { await browser.close() }`, drop `{force:true}`, replace fixed sleeps with `waitForSelector`/`waitForResponse`/`waitForFunction` (`.hermes/probe_*.js`).\n- Make probes fail loudly: assert non-empty chain, assert `#kit/#canvas/#app` exist, exit non-zero when Run button missing, make screenshot dir configurable (`.hermes/probe_chain.js`, `probe_widget.js`, `probe_run.js`, `probe_layout.js`).\n- Fix one-line frontend bugs: `TIPS[\"runs.resume\"]` for approve buttons, `BUTTON`/contenteditable in Delete guard, `cronFieldOk` require exactly 2 `/` segments, refresh `savedNames` before Run, store `{from,to}` not `from\u003eto` (`widgets/designer.html`, `desktop/plugin.js`).\n- Fix trivial JS/Python slips: `getAttribute('class')` for SVG (`.hermes/probe_chain.js`), parenthesize `slice` input (`.hermes/probe_heights.js`), return `{name,missing:true}` (`.hermes/probe_shell.js`), add weekday `7→Sunday` alias and remove dead step guard (`visual_workflow_hermes/schedule.py`), `four→five` tools (`visual_workflow_hermes/__init__.py`).\n- Add `timeout-minutes: 15`, `concurrency: cancel-in-progress`, and `setup-uv` cache to `.github/workflows/ci.yml`; add `set -euo pipefail` + `\"$@\"` forwarding and pin `--with` versions in `.hermes/run_live_retry.sh`.\n- Guard `loadGraph` with `Array.isArray` + per-node `x/y` coercion, disconnect `ResizeObserver` + handle `pointercancel/blur` for drags, add `main()`/`if __name__ == \"__main__\"` guards to `.hermes/repair_run_status.py`, `seam_probe.py`, `live_approval.py`.",
+  "session_id": "9bbc4caf-5bc2-4408-be83-fdc0148b7250"
+}

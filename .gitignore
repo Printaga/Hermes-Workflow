@@ -12,3 +12,6 @@ build/
 .env.*
 !.env.example
 *.pem
+
+# CodeWiki session workspaces (generated while authoring docs/)
+.codewiki/
