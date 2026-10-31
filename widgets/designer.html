@@ -80,6 +80,12 @@
     white-space: pre-wrap; border-top: 1px solid var(--border, #3a3a3a);
     color: var(--muted-foreground, #9a9a9a);
   }
+  /* One-word status is separate from the validation detail list: writing the word into
+     #errors used to erase the problems the banner told the reader to look at. */
+  #status {
+    margin: 0; padding: 2px 0; font-size: 11px;
+    color: var(--muted-foreground, #9a9a9a);
+  }
   button.pill, select, input[type=text], textarea {
     font: inherit; color: inherit; background: var(--card, #1e1e1e);
     border: 1px solid var(--border, #3a3a3a); border-radius: 6px;
@@ -153,6 +159,7 @@
   </div>
   <div id="banner" role="status" aria-live="polite" aria-atomic="true" hidden></div>
   <pre id="errors" hidden></pre>
+  <p id="status" hidden></p>
   <div id="run" hidden></div>
 </div>
 
@@ -208,6 +215,7 @@
     "output.parents": "Steps whose results this output collects — connect an edge instead of typing here.",
     "output.send_to": "One choice: collect only, a home channel for a notification, or one specific chat.",
     "output.target": "Where it goes: a platform for its home channel, or platform:chat id like telegram:8522302999.",
+    "runs.approve": "Answer this gate now; the run resumes from where it stopped.",
     "runs.resume": "Paste the agent step's result here and resume the run right where it paused.",
     "runs.agent": "Let the host agent produce this step's output now, then resume right where it paused.",
     "runs.retry": "Re-run this failed run from the step that failed; steps that already finished are kept.",
@@ -274,8 +282,11 @@
       if (!part) { return false; }
       if (part.indexOf("/") >= 0) {
         var step = part.split("/");
+        // Exactly one step segment: "*/15/2" and "5/10/extra" are not valid cron.
+        if (step.length !== 2) { return false; }
         part = step[0];
         if (!/^\d+$/.test(step[1] || "") || parseInt(step[1], 10) < 1) { return false; }
+        if (part !== "*" && part.indexOf("-") < 0 && !/^\d+$/.test(part)) { return false; }
       }
       if (part === "*") { continue; }
       if (part.indexOf("-") >= 0) {
@@ -315,7 +326,10 @@
     if (cronProblem(text)) { return text; }
     var f = text.split(/\s+/);
     if (f[2] !== "*" || f[3] !== "*") { return "custom schedule"; }
-    if (f[1] === "*") { return "every hour at :" + pad2(parseInt(f[0], 10)); }
+    if (f[1] === "*") {
+      // "* * * * *" is valid cron (no fixed minute), so guard the cast or this reads ":NaN".
+      return /^\d+$/.test(f[0]) ? "every hour at :" + pad2(parseInt(f[0], 10)) : "every hour";
+    }
     if (!/^\d+$/.test(f[0]) || !/^\d+$/.test(f[1])) { return "custom schedule"; }
     var at = pad2(parseInt(f[1], 10)) + ":" + pad2(parseInt(f[0], 10));
     if (f[4] === "*") { return "every day at " + at; }
@@ -330,10 +344,12 @@
     if (cronProblem(text)) { return "custom"; }
     var f = text.split(/\s+/);
     if (f[2] !== "*" || f[3] !== "*") { return "custom"; }
-    if (f[1] === "*") { return "hourly"; }
+    if (f[1] === "*") { return /^\d+$/.test(f[0]) ? "hourly" : "custom"; }
+    if (!/^\d+$/.test(f[0]) || !/^\d+$/.test(f[1])) { return "custom"; }
     if (f[4] === "1-5") { return "weekdays"; }
     if (f[4] === "*") { return "daily"; }
-    return "weekly";
+    // A list/step weekday has no weekly-picker equivalent; calling it weekly would coerce it.
+    return /^\d+$/.test(f[4]) ? "weekly" : "custom";
   }
 
   function timeOf(expression) {
@@ -346,7 +362,13 @@
 
   function weekdayOf(expression) {
     var f = String(expression || "").trim().split(/\s+/);
-    if (f.length === 5 && /^\d+$/.test(f[4])) { return WEEKDAYS[parseInt(f[4], 10) % 7][0]; }
+    if (f.length === 5 && /^\d+$/.test(f[4])) {
+      // cron day-of-week is 0=Sunday..6=Saturday (7 is Sunday too); WEEKDAYS starts at Monday.
+      var dayName = DAY_NAMES[parseInt(f[4], 10) % 7];
+      for (var i = 0; i < WEEKDAYS.length; i += 1) {
+        if (WEEKDAYS[i][1] === dayName) { return WEEKDAYS[i][0]; }
+      }
+    }
     return "mon";
   }
   var MAX_NODES = 50;
@@ -362,7 +384,9 @@
   // to the child's input port, so the curve reads as a direction.
   function outPort(n) { return { x: n.x + NODE_W, y: n.y + NODE_H / 2 }; }
   function inPort(n) { return { x: n.x, y: n.y + NODE_H / 2 }; }
-  function edgeKey(from, to) { return from + ">" + to; }
+  // JSON, not "from>to": an id may itself contain '>', and the key is parsed back when a
+  // selected edge is deleted. JSON keeps the pair unambiguous without a charset rule.
+  function edgeKey(from, to) { return JSON.stringify([from, to]); }
   function edgePath(parent, child) {
     var p = outPort(parent), q = inPort(child);
     var bend = Math.max(30, Math.abs(q.x - p.x) / 2);
@@ -788,21 +812,43 @@
       var start = svgPoint(ev);
       var offset = { x: start.x - n.x, y: start.y - n.y };
       var moved = false;
+      var frame = null;
+      // One redraw per animation frame, not one per pixel: draw() rebuilds the whole SVG.
+      function scheduleDraw() {
+        if (frame) { return; }
+        if (typeof requestAnimationFrame !== "function") { draw(); return; }
+        frame = requestAnimationFrame(function () { frame = null; draw(); });
+      }
+      function cleanup() {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.removeEventListener("pointercancel", cancel);
+        window.removeEventListener("blur", cancel);
+        if (frame && typeof cancelAnimationFrame === "function") { cancelAnimationFrame(frame); }
+        frame = null;
+      }
+      // Released off-window / cancelled: never leave fitLocked stuck or a ghost on screen.
+      function cancel() {
+        cleanup();
+        fitLocked = false;
+        draw();
+      }
       function onMove(moveEv) {
         var p = svgPoint(moveEv);
         if (Math.abs(p.x - start.x) > 3 || Math.abs(p.y - start.y) > 3) { moved = true; }
         n.x = Math.max(0, Math.round(p.x - offset.x));
         n.y = Math.max(0, Math.round(p.y - offset.y));
-        draw();
+        scheduleDraw();
       }
       function onUp() {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
+        cleanup();
         fitLocked = false;
         if (!moved) { pick(n.id); } else { draw(); }
       }
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
+      document.addEventListener("pointercancel", cancel);
+      window.addEventListener("blur", cancel);
     });
   }
 
@@ -848,16 +894,35 @@
     fitLocked = true;
     dragLink = { from: n.id, x1: origin.x, y1: origin.y, x2: start.x, y2: start.y };
     draw();
+    var frame = null;
+    function scheduleDraw() {
+      if (frame) { return; }
+      if (typeof requestAnimationFrame !== "function") { draw(); return; }
+      frame = requestAnimationFrame(function () { frame = null; draw(); });
+    }
+    function cleanup() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+      if (frame && typeof cancelAnimationFrame === "function") { cancelAnimationFrame(frame); }
+      frame = null;
+    }
+    function cancel() {
+      cleanup();
+      dragLink = null;
+      fitLocked = false;
+      draw();
+    }
     function onMove(moveEv) {
       var p = svgPoint(moveEv);
       if (Math.abs(p.x - start.x) > 3 || Math.abs(p.y - start.y) > 3) { moved = true; }
       dragLink.x2 = p.x;
       dragLink.y2 = p.y;
-      draw();
+      scheduleDraw();
     }
     function onUp(upEv) {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+      cleanup();
       var from = dragLink.from;
       dragLink = null;
       fitLocked = false;
@@ -874,6 +939,8 @@
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
+    document.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
   }
 
   /** Add the *from* -> *to* edge, refusing the three ways it could be wrong. */
@@ -913,8 +980,8 @@
   /** Delete the selected edge, else the selected node and every edge touching it. */
   function removeSelected() {
     if (selectedEdge) {
-      var parts = selectedEdge.split(">");
-      cutEdge(parts[0], parts[1]);
+      var pair = JSON.parse(selectedEdge);
+      cutEdge(pair[0], pair[1]);
       return true;
     }
     if (!selected) { return false; }
@@ -1062,7 +1129,9 @@
       .then(function (res) { return res.ok ? res.json() : null; })
       .then(function (data) {
         profiles = (data && data.profiles) || [];
-        buildInspector();
+        // A late catalog response must not wipe a control the user is typing in.
+        var insp = document.getElementById("inspector");
+        if (!insp || !insp.contains(document.activeElement)) { buildInspector(); }
       })
       .catch(function () { profiles = []; });
   }
@@ -1074,7 +1143,9 @@
       .then(function (res) { return res.ok ? res.json() : null; })
       .then(function (data) {
         models = (data && data.providers) || [];
-        buildInspector();
+        // A late catalog response must not wipe a control the user is typing in.
+        var insp = document.getElementById("inspector");
+        if (!insp || !insp.contains(document.activeElement)) { buildInspector(); }
       })
       .catch(function () { models = []; });
   }
@@ -1324,7 +1395,7 @@
   /** A one-word status in the detail box. Never write into a hidden box: a note nobody
    *  can see is the same as no note at all. */
   function note(message) {
-    var box = document.getElementById("errors");
+    var box = document.getElementById("status");
     box.textContent = message || "";
     box.hidden = !message;
   }
@@ -1384,7 +1455,7 @@
 
   // -------------------------------------------------------------- run
   var API = "/api/plugins/visual-workflow";
-  var savedNames = [];  // designs the backend already has, so Run can refuse a draft by name
+  var savedNames = null;  // designs the backend has; null until the list has actually loaded
 
   /** Chats the host gateway has seen (``GET /channels``); empty means the output inspector
    *  falls back to a typed target instead of a picker that cannot fill. */
@@ -1394,18 +1465,21 @@
       .then(function (res) { return res.ok ? res.json() : null; })
       .then(function (data) {
         channels = (data && data.channels) || [];
-        buildInspector();
+        // A late catalog response must not wipe a control the user is typing in.
+        var insp = document.getElementById("inspector");
+        if (!insp || !insp.contains(document.activeElement)) { buildInspector(); }
       })
       .catch(function () { channels = []; });
   }
 
-  /** Remember which names are saved: a draft has no server-side design to run. */
+  /** Remember which names are saved: a draft has no server-side design to run.
+   *  Returns the request so Run can refresh a list loaded earlier in the session. */
   function refreshDesigns() {
-    if (!window.fetch) { return; }
-    window.fetch(API + "/designs", { credentials: "same-origin" })
+    if (!window.fetch) { return null; }
+    return window.fetch(API + "/designs", { credentials: "same-origin" })
       .then(function (res) { return res.ok ? res.json() : null; })
-      .then(function (data) { savedNames = (data && data.designs) || []; })
-      .catch(function () { savedNames = []; });
+      .then(function (data) { savedNames = Array.isArray(data && data.designs) ? data.designs : []; })
+      .catch(function () { savedNames = null; });  // unknown, not "nothing is saved"
   }
 
   /** A small run-panel action button (the widget has no framework to build one). */
@@ -1649,43 +1723,56 @@
       banner("Name the workflow before running it.", "error");
       return;
     }
-    if (savedNames.indexOf(name) < 0) {
-      showErrors([{ node: "", field: "name", msg: name + " is not saved yet" }]);
-      note("not run");
-      banner("“" + name + "” is not saved yet — press Save to Hermes, then Run.", "error");
-      return;
-    }
     if (!window.fetch) {
       banner("Run failed — this page has no way to reach the backend.", "error");
       return;
     }
-    note("running " + name + "…");
-    banner("Running “" + name + "”…", "");
-    window.fetch(API + "/designs/" + encodeURIComponent(name) + "/run", {
-      method: "POST", credentials: "same-origin",
-    }).then(function (res) {
-      return res.json().then(function (body) { return { ok: res.ok, body: body }; });
-    }).then(function (out) {
-      if (!out.ok) {
-        var detail = (out.body && out.body.detail) || "the request failed";
+
+    function sendRun() {
+      note("running " + name + "…");
+      banner("Running “" + name + "”…", "");
+      window.fetch(API + "/designs/" + encodeURIComponent(name) + "/run", {
+        method: "POST", credentials: "same-origin",
+      }).then(function (res) {
+        return res.json().then(function (body) { return { ok: res.ok, body: body }; });
+      }).then(function (out) {
+        if (!out.ok) {
+          var detail = (out.body && out.body.detail) || "the request failed";
+          showErrors([{ node: "", field: "run", msg: detail }]);
+          note("");
+          banner("Run failed — " + detail, "error");
+          return;
+        }
+        if (out.body && out.body.status === "invalid") {
+          showErrors(out.body.errors || []);
+          note("not run");
+          banner("Not run — the design has " + (out.body.errors || []).length + " problem(s).", "error");
+          return;
+        }
+        renderRun(out.body || {});
+      }).catch(function (err) {
+        var detail = err && err.message ? err.message : String(err);
         showErrors([{ node: "", field: "run", msg: detail }]);
         note("");
         banner("Run failed — " + detail, "error");
-        return;
-      }
-      if (out.body && out.body.status === "invalid") {
-        showErrors(out.body.errors || []);
-        note("not run");
-        banner("Not run — the design has " + (out.body.errors || []).length + " problem(s).", "error");
-        return;
-      }
-      renderRun(out.body || {});
-    }).catch(function (err) {
-      var detail = err && err.message ? err.message : String(err);
-      showErrors([{ node: "", field: "run", msg: detail }]);
-      note("");
-      banner("Run failed — " + detail, "error");
-    });
+      });
+    }
+
+    if (savedNames && savedNames.indexOf(name) < 0) {
+      // The list was fetched when this page loaded; a design saved from chat since then
+      // would be falsely refused. Ask once more, and let the POST decide if it cannot answer.
+      refreshDesigns().then(function () {
+        if (savedNames && savedNames.indexOf(name) < 0) {
+          showErrors([{ node: "", field: "name", msg: name + " is not saved yet" }]);
+          note("not run");
+          banner("“" + name + "” is not saved yet — press Save to Hermes, then Run.", "error");
+          return;
+        }
+        sendRun();
+      });
+      return;
+    }
+    sendRun();
   }
 
   /** Validate against the server when it is reachable (it is the authority), locally otherwise.
@@ -1721,9 +1808,18 @@
         note(errors.length + " problem(s)");
         banner("Not valid · " + errors.length + " problem(s) — see the details below the canvas.", "error");
       }
-    }).catch(function () {
-      // No backend (a bare file:// preview): the local validator is the only authority left.
-      reportValid(validateGraph(graph));
+    }).catch(function (err) {
+      if (err && err.name === "TypeError") {
+        // No HTTP response at all (a bare file:// preview): the local validator is the
+        // only authority left. Any other failure means the backend did answer badly and
+        // must be said out loud rather than misreported as a local verdict.
+        reportValid(validateGraph(graph));
+        return;
+      }
+      var detail = err && err.message ? err.message : String(err);
+      showErrors([{ node: "", field: "validate", msg: detail }]);
+      note("");
+      banner("Validate failed — " + detail, "error");
     });
   }
 
@@ -1875,7 +1971,10 @@
 
     document.addEventListener("keydown", function (ev) {
       var target = ev.target || {};
-      if (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || "")) { return; }
+      // A focused button (palette, dismiss, inspector toggle, run panel) is not a canvas
+      // focus: Delete there must not silently remove the selected node or edge.
+      if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName || "")) { return; }
+      if (target.isContentEditable) { return; }
       if (ev.key !== "Delete" && ev.key !== "Backspace") { return; }
       if (!selected && !selectedEdge) { return; }
       ev.preventDefault();

@@ -1,16 +1,28 @@
 name: CI
 
 on:
-  push
+  push:
 
 permissions:
   contents: read
 
+# A rapid series of pushes only needs the newest run; cancel the superseded ones.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     runs-on: ubuntu-latest
+    # A hung pytest / host probe must fail the job instead of holding a runner for hours.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      # Pinned uv with the dependency cache enabled: the same interpreter the steps below use.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       # Full suite (route tests included, never skipped): an ephemeral env with the
       # fastapi/httpx the dashboard router imports, the same command shape verified locally.

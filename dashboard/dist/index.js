@@ -163,8 +163,11 @@
       if (!part) return false;
       if (part.indexOf("/") >= 0) {
         var step = part.split("/");
+        // Exactly one step segment: "*/15/2" and "5/10/extra" are not valid cron.
+        if (step.length !== 2) return false;
         part = step[0];
         if (!/^\d+$/.test(step[1] || "") || parseInt(step[1], 10) < 1) return false;
+        if (part !== "*" && part.indexOf("-") < 0 && !/^\d+$/.test(part)) return false;
       }
       if (part === "*") continue;
       if (part.indexOf("-") >= 0) {
@@ -205,7 +208,10 @@
     if (cronProblem(text)) return text;
     var f = text.split(/\s+/);
     if (f[2] !== "*" || f[3] !== "*") return "custom schedule";
-    if (f[1] === "*") return "every hour at :" + pad2(parseInt(f[0], 10));
+    if (f[1] === "*") {
+      // "* * * * *" is valid cron (no fixed minute), so guard the cast or this reads ":NaN".
+      return /^\d+$/.test(f[0]) ? "every hour at :" + pad2(parseInt(f[0], 10)) : "every hour";
+    }
     if (!/^\d+$/.test(f[0]) || !/^\d+$/.test(f[1])) return "custom schedule";
     var at = pad2(parseInt(f[1], 10)) + ":" + pad2(parseInt(f[0], 10));
     if (f[4] === "*") return "every day at " + at;
@@ -220,10 +226,12 @@
     if (cronProblem(text)) return "custom";
     var f = text.split(/\s+/);
     if (f[2] !== "*" || f[3] !== "*") return "custom";
-    if (f[1] === "*") return "hourly";
+    if (f[1] === "*") return /^\d+$/.test(f[0]) ? "hourly" : "custom";
+    if (!/^\d+$/.test(f[0]) || !/^\d+$/.test(f[1])) return "custom";
     if (f[4] === "1-5") return "weekdays";
     if (f[4] === "*") return "daily";
-    return "weekly";
+    // A list/step weekday has no weekly-picker equivalent; calling it weekly would coerce it.
+    return /^\d+$/.test(f[4]) ? "weekly" : "custom";
   }
 
   function timeOf(expression) {
@@ -236,7 +244,13 @@
 
   function weekdayOf(expression) {
     var f = String(expression || "").trim().split(/\s+/);
-    if (f.length === 5 && /^\d+$/.test(f[4])) return WEEKDAYS[parseInt(f[4], 10) % 7][0];
+    if (f.length === 5 && /^\d+$/.test(f[4])) {
+      // cron day-of-week is 0=Sunday..6=Saturday (7 is Sunday too); WEEKDAYS starts at Monday.
+      var dayName = DAY_NAMES[parseInt(f[4], 10) % 7];
+      for (var i = 0; i < WEEKDAYS.length; i += 1) {
+        if (WEEKDAYS[i][1] === dayName) return WEEKDAYS[i][0];
+      }
+    }
     return "mon";
   }
   // Compact cards: the canvas is often 600px wide inside a dashboard that already has two
@@ -259,7 +273,9 @@
   }
 
   function edgeKey(from, to) {
-    return from + ">" + to;
+    // JSON, not "from>to": an id may itself contain '>', and the key is parsed back when a
+    // selected edge is deleted. JSON keeps the pair unambiguous without a charset rule.
+    return JSON.stringify([from, to]);
   }
 
   function edgePath(parent, child) {
@@ -461,6 +477,9 @@
     var dragLink = null;  // live drag from an output port: {from, x1, y1, x2, y2}
     var lastRun = null;
     var savedNames = [];   // names known to exist server-side; Run refuses a draft instead of 404ing
+    var designsLoaded = false;  // only gate Run once GET /designs actually succeeded
+    var sizeObserver = null;    // kept so unmount can disconnect it
+    var gestureCleanup = null;  // cancels an in-flight drag/link on unmount or window blur
 
     function nodeById(id) {
       var hits = graph.nodes.filter(function (n) {
@@ -551,12 +570,15 @@
     function watchSize() {
       if (typeof ResizeObserver !== "function") return;
       var width = el.wrap.clientWidth;
-      new ResizeObserver(function () {
+      sizeObserver = new ResizeObserver(function () {
+        // A detached wrap is not a resize: stop fitting a canvas nobody can see.
+        if (!el.wrap.isConnected) return;
         if (el.wrap.clientWidth !== width) {
           width = el.wrap.clientWidth;
           fit();
         }
-      }).observe(el.wrap);
+      });
+      sizeObserver.observe(el.wrap);
     }
 
     function draw() {
@@ -692,22 +714,46 @@
         var start = svgPoint(ev);
         var offset = { x: start.x - n.x, y: start.y - n.y };
         var moved = false;
+        var frame = null;
+        // One redraw per animation frame, not one per pixel: draw() rebuilds the whole SVG.
+        function scheduleDraw() {
+          if (frame) return;
+          if (typeof requestAnimationFrame !== "function") { draw(); return; }
+          frame = requestAnimationFrame(function () { frame = null; draw(); });
+        }
+        function cleanup() {
+          document.removeEventListener("mousemove", onMove);
+          document.removeEventListener("mouseup", onUp);
+          document.removeEventListener("pointercancel", cancel);
+          window.removeEventListener("blur", cancel);
+          if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
+          frame = null;
+          gestureCleanup = null;
+        }
+        // Released off-window / cancelled: never leave fitLocked stuck or a ghost on screen.
+        function cancel() {
+          cleanup();
+          fitLocked = false;
+          draw();
+        }
         function onMove(moveEv) {
           var p = svgPoint(moveEv);
           if (Math.abs(p.x - start.x) > 3 || Math.abs(p.y - start.y) > 3) moved = true;
           n.x = Math.max(0, Math.round(p.x - offset.x));
           n.y = Math.max(0, Math.round(p.y - offset.y));
-          draw();
+          scheduleDraw();
         }
         function onUp() {
-          document.removeEventListener("mousemove", onMove);
-          document.removeEventListener("mouseup", onUp);
+          cleanup();
           fitLocked = false;
           if (!moved) pick(n.id);
           else draw();
         }
+        gestureCleanup = cancel;
         document.addEventListener("mousemove", onMove);
         document.addEventListener("mouseup", onUp);
+        document.addEventListener("pointercancel", cancel);
+        window.addEventListener("blur", cancel);
       });
     }
 
@@ -755,16 +801,36 @@
       fitLocked = true;
       dragLink = { from: n.id, x1: origin.x, y1: origin.y, x2: start.x, y2: start.y };
       draw();
+      var frame = null;
+      function scheduleDraw() {
+        if (frame) return;
+        if (typeof requestAnimationFrame !== "function") { draw(); return; }
+        frame = requestAnimationFrame(function () { frame = null; draw(); });
+      }
+      function cleanup() {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.removeEventListener("pointercancel", cancel);
+        window.removeEventListener("blur", cancel);
+        if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
+        frame = null;
+        gestureCleanup = null;
+      }
+      function cancel() {
+        cleanup();
+        dragLink = null;
+        fitLocked = false;
+        draw();
+      }
       function onMove(moveEv) {
         var p = svgPoint(moveEv);
         if (Math.abs(p.x - start.x) > 3 || Math.abs(p.y - start.y) > 3) moved = true;
         dragLink.x2 = p.x;
         dragLink.y2 = p.y;
-        draw();
+        scheduleDraw();
       }
       function onUp(upEv) {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
+        cleanup();
         var from = dragLink.from;
         dragLink = null;
         fitLocked = false;
@@ -779,12 +845,15 @@
         }
         // A click (no drag) arms the port, so the next input-port click completes it.
         linkArm = from;
-        note("Now click the input port of the node that should run after " + from + ".");
-        draw();
-      }
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
+      note("Now click the input port of the node that should run after " + from + ".");
+      draw();
     }
+    gestureCleanup = cancel;
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    document.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
+  }
 
     /** Add the *from* -> *to* edge, refusing the three ways it could be wrong. */
     function finishLink(from, to) {
@@ -828,8 +897,8 @@
 
     function removeSelected() {
       if (selectedEdge) {
-        var parts = selectedEdge.split(">");
-        cutEdge(parts[0], parts[1]);
+        var pair = JSON.parse(selectedEdge);
+        cutEdge(pair[0], pair[1]);
         return;
       }
       if (!selected) {
@@ -1182,7 +1251,13 @@
         call(path(name) + "/schedule", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ preset: "custom", cron: node.schedule }),
+          // Same shape as the Schedules form, so the two call sites cannot drift.
+          body: JSON.stringify({
+            preset: presetOf(node.schedule),
+            time: timeOf(node.schedule),
+            weekday: weekdayOf(node.schedule),
+            cron: node.schedule,
+          }),
         }).then(function (data) {
           if (!data.ok) {
             reading.className = "vw-error";
@@ -1507,6 +1582,9 @@
           banner("Not saved \u2014 " + (data.errors || []).length + " problem(s), see the details below the canvas.", "error");
           return;
         }
+        // A refresh is async; remember this name now so pressing Run immediately after Save
+        // cannot be refused as "not saved yet".
+        if (savedNames.indexOf(data.name) < 0) savedNames.push(data.name);
         showErrors([]);
         note("saved " + data.name + " (" + data.nodes + " node(s))");
         banner("Saved \u201c" + data.name + "\u201d \u00b7 " + data.nodes + " node(s).", "info");
@@ -1526,7 +1604,8 @@
         return;
       }
       // A draft that was never saved has no server-side design to run: saying so beats a 404.
-      if (savedNames.indexOf(name) < 0) {
+      // Only gate once the list has actually loaded; before that the POST is authoritative.
+      if (designsLoaded && savedNames.indexOf(name) < 0) {
         showErrors([{ node: "", field: "name", msg: name + " is not saved yet" }]);
         note("not run");
         banner("\u201c" + name + "\u201d is not saved yet \u2014 press Save, then Run.", "error");
@@ -1806,7 +1885,20 @@
 
     /** Replace the canvas with a stored graph (or a blank one). */
     function loadGraph(next) {
-      graph = clone(next && next.nodes ? next : BLANK);
+      // A saved design / template is untrusted input: a non-list `nodes` used to reach
+      // layout() and throw, leaving a blank canvas with no explanation.
+      var usable = next && typeof next === "object" && Array.isArray(next.nodes)
+        && next.nodes.length;
+      graph = clone(usable ? next : BLANK);
+      graph.nodes = graph.nodes.filter(function (n) {
+        return n && typeof n === "object" && typeof n.id === "string" && n.id;
+      });
+      graph.nodes.forEach(function (n) {
+        n.after = Array.isArray(n.after) ? n.after.filter(function (dep) {
+          return typeof dep === "string";
+        }) : [];
+        if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) { delete n.x; delete n.y; }
+      });
       if (!graph.name) graph.name = "untitled";
       selected = null;
       selectedEdge = null;
@@ -1827,20 +1919,21 @@
 
     return {
       loadGraph: loadGraph,
-      /** Replace the profile/bot list the agent inspector offers. */
+      /** Replace the profile/bot list the agent inspector offers. The drawer is rebuilt only
+       *  when the user is not typing in it, so a late catalog response cannot wipe an edit. */
       setProfiles: function (list) {
         profiles = Array.isArray(list) ? list : [];
-        buildInspector();
+        if (!el.inspector.contains(document.activeElement)) buildInspector();
       },
       /** Replace the model catalog the agent inspector offers. */
       setModels: function (list) {
         models = Array.isArray(list) ? list : [];
-        buildInspector();
+        if (!el.inspector.contains(document.activeElement)) buildInspector();
       },
       /** Replace the delivery targets the output inspector offers. */
       setChannels: function (list) {
         channels = Array.isArray(list) ? list : [];
-        buildInspector();
+        if (!el.inspector.contains(document.activeElement)) buildInspector();
       },
       /** Bring a stored run back into the run panel, where its resume box lives. */
       showRun: function (result) {
@@ -1849,6 +1942,7 @@
       /** Names known to exist server-side, so Run can refuse a draft instead of sending a 404. */
       setDesigns: function (list) {
         savedNames = Array.isArray(list) ? list.slice() : [];
+        designsLoaded = true;
       },
       /** The draft graph as it would be sent to the backend. */
       getGraph: payloadGraph,
@@ -1856,6 +1950,15 @@
         var blank = clone(BLANK);
         blank.name = name || "untitled";
         loadGraph(blank);
+      },
+      /** Release what the mount owns: the size observer and any in-flight drag listeners. */
+      destroy: function () {
+        if (gestureCleanup) gestureCleanup();
+        if (sizeObserver) {
+          sizeObserver.disconnect();
+          sizeObserver = null;
+        }
+        el.inspector.textContent = "";
       },
     };
   }
@@ -2231,6 +2334,7 @@
       loadModels();
       loadChannels();
       return function () {
+        if (designerRef.current) designerRef.current.destroy();
         designerRef.current = null;
       };
     }, [refresh, loadTemplates, loadProfiles, loadModels, loadChannels]);

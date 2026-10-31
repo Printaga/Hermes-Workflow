@@ -27,16 +27,27 @@ def diagnose_failure(exc: BaseException) -> dict:
     timeout, trust refusal, auth, unknown model, connection — else ``{}`` so the raw message
     is what the run records (never a wrong reason invented for an unknown error).
     """
-    # The trust gate is a class, not a phrase: ``PluginLlmTrustError`` subclasses
-    # ``PermissionError``, and the message then names the exact config key to set.
-    if isinstance(exc, PermissionError):
+    # The trust gate is a class, not just a phrase: ``PluginLlmTrustError`` subclasses
+    # ``PermissionError``, and its message names the exact config key to set. Another
+    # PermissionError (a filesystem/OS failure) is not a trust refusal, so require the
+    # distinctive signal rather than treating every PermissionError as one.
+    text = f"{str(exc)} {type(exc).__name__}".lower()
+    if isinstance(exc, PermissionError) and (
+            "trust" in type(exc).__name__.lower()
+            or "allow_" in text or "plugin" in text and "override" in text):
         return {
             "kind": "trust refusal",
             "why": (f"the host refused this step's override — either clear the step's model "
                     f"field or set plugins.entries.{PLUGIN_ID}.llm.allow_model_override in "
                     f"the host config"),
         }
-    text = f"{str(exc)} {type(exc).__name__}".lower()
+    # Auth comes first: "api key not found" contains "not found" too, and telling the user
+    # to fix the Model field would send them to the wrong place.
+    if ("401" in text or "403" in text or "api key" in text
+            or "unauthorized" in text or "authentication" in text):
+        return {"kind": "auth failed",
+                "why": "the provider rejected the credentials — check that provider's key "
+                       "in the host config"}
     if "does not exist" in text or "not found" in text or "decommissioned" in text:
         return {"kind": "unknown model",
                 "why": "the provider has no model by that id — fix the step's Model field"}
@@ -46,14 +57,8 @@ def diagnose_failure(exc: BaseException) -> dict:
     if "timed out" in text or "timeout" in text or "deadline" in text:
         return {"kind": "timed out",
                 "why": "the call outlived its budget — rerun, or give the step a longer timeout"}
-    if ("401" in text or "403" in text or "api key" in text
-            or "unauthorized" in text or "authentication" in text):
-        return {"kind": "auth failed",
-                "why": "the provider rejected the credentials — check that provider's key "
-                       "in the host config"}
     if ("connection" in text or "econnrefused" in text or "getaddrinfo" in text
-            or "resolve" in text or "reset by peer" in text or "temporarily" in text
-            or "unable to reach" in text):
+            or "reset by peer" in text or "unable to reach" in text):
         return {"kind": "connection problem",
                 "why": "the model provider is unreachable from this machine — a retry often "
                        "clears it; a repeat means check the host's model setup"}
@@ -75,10 +80,17 @@ def llm_spawn(llm: Any = None, plugin_id: str = PLUGIN_ID) -> Optional[Callable[
     if llm is None:
         try:
             from agent.plugin_llm import PluginLlm
-
-            llm = PluginLlm(plugin_id=plugin_id)
-        except Exception:  # host absent (unit tests, plain tooling) or the repository moved
+        except ImportError:  # host absent (unit tests, plain tooling) or the repository moved
             return None
+        try:
+            llm = PluginLlm(plugin_id=plugin_id)
+        except Exception as exc:
+            # The host is present but cannot build the facade. Returning None would park
+            # the run at awaiting_agent forever; make the failure a step error instead.
+            def unavailable(step, outputs, run=None):
+                return {"error": f"agent backend unavailable: {exc}"}
+
+            return unavailable
     return _make_spawn(llm)
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
@@ -15,6 +16,26 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 
 def _hermes_home() -> Path:
     return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+
+
+def _write_json(path: Path, payload) -> None:
+    """Write JSON atomically: a reader never sees a truncated file.
+
+    ``write_text`` truncates before streaming, and the canvas polls the run store while the
+    runner saves on every step, so a torn read is a real (not theoretical) race. The temp
+    file lives in the destination directory so ``os.replace`` stays atomic.
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2) + "\n")
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 class DesignStore:
@@ -25,7 +46,8 @@ class DesignStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, name: str) -> Path:
-        if not _NAME_RE.match(name or ""):
+        # JSON is untyped: a number/object here is a bad name, not a TypeError from re.match.
+        if not isinstance(name, str) or not _NAME_RE.match(name):
             raise ValueError(
                 f"bad design name {name!r}: use [a-z0-9_.-], start alnum, max 64 chars"
             )
@@ -41,14 +63,17 @@ class DesignStore:
                 f"invalid graph: {first['node']}:{first['field']}: {first['msg']}"
             )
         path = self._path(name)
-        path.write_text(json.dumps(graph, indent=2) + "\n")
+        _write_json(path, graph)
         return path
 
     def load(self, name: str) -> dict:
         path = self._path(name)
-        if not path.exists():
-            raise FileNotFoundError(f"no saved workflow named {name!r}")
-        return json.loads(path.read_text())
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            raise FileNotFoundError(f"no saved workflow named {name!r}") from None
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"corrupt workflow file {name!r}: {exc}") from exc
 
     def list_designs(self) -> list[str]:
         return sorted(p.stem for p in self.root.glob("*.json"))
@@ -69,20 +94,28 @@ class RunStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, run_id: str) -> Path:
-        if not _RUN_ID_RE.match(run_id or ""):
+        # A non-string id (e.g. a number from a hand-written tool argument) is a bad id, not
+        # a TypeError escaping the store's ValueError contract.
+        if not isinstance(run_id, str) or not _RUN_ID_RE.match(run_id):
             raise ValueError(f"bad run id {run_id!r}")
         return self.root / f"{run_id}.json"
 
     def save(self, state: dict) -> Path:
-        path = self._path(state["run_id"])
-        path.write_text(json.dumps(state, indent=2) + "\n")
+        run_id = state.get("run_id") if isinstance(state, dict) else None
+        if not isinstance(run_id, str):  # KeyError/TypeError would break the ValueError contract
+            raise ValueError(f"run state has no valid run_id: {run_id!r}")
+        path = self._path(run_id)
+        _write_json(path, state)
         return path
 
     def load(self, run_id: str) -> dict:
         path = self._path(run_id)
-        if not path.exists():
-            raise FileNotFoundError(f"no run {run_id!r}")
-        return json.loads(path.read_text())
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            raise FileNotFoundError(f"no run {run_id!r}") from None
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"corrupt run file {run_id!r}: {exc}") from exc
 
     def list_runs(self) -> list[str]:
         return sorted(p.stem for p in self.root.glob("*.json"))

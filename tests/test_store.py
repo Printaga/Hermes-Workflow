@@ -43,6 +43,23 @@ def test_rejects_bad_names(tmp_path):
         s.load("missing")
 
 
+def test_a_non_string_name_is_a_value_error_not_a_type_error(tmp_path):
+    """Tool arguments are untyped JSON: an int id is a bad name, not a crash in re.match."""
+    s = DesignStore(root=tmp_path)
+    with pytest.raises(ValueError):
+        s.load(123)
+
+
+def test_a_non_string_run_id_is_a_value_error_too(tmp_path):
+    from visual_workflow_hermes.store import RunStore
+
+    runs = RunStore(root=tmp_path)
+    with pytest.raises(ValueError):
+        runs.load(123)
+    with pytest.raises(ValueError):
+        runs.save({"run_id": 123})
+
+
 def test_list_designs_sorted(tmp_path):
     s = DesignStore(root=tmp_path)
     s.save("b-one", _graph("b"))

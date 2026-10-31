@@ -145,6 +145,8 @@ function cronFieldOk(raw, low, high) {
     if (!part) return false;
     if (part.indexOf("/") >= 0) {
       const step = part.split("/");
+      // Exactly one step segment: "*/15/2" and "5/10/extra" are not valid cron.
+      if (step.length !== 2) return false;
       part = step[0];
       if (!/^\d+$/.test(step[1] || "") || parseInt(step[1], 10) < 1) return false;
     }
@@ -187,7 +189,10 @@ function describeCron(expression) {
   if (cronProblem(text)) return text;
   const f = text.split(/\s+/);
   if (f[2] !== "*" || f[3] !== "*") return "custom schedule";
-  if (f[1] === "*") return "every hour at :" + pad2(parseInt(f[0], 10));
+  if (f[1] === "*") {
+    // "* * * * *" is valid cron (no fixed minute), so guard the cast or this reads ":NaN".
+    return /^\d+$/.test(f[0]) ? "every hour at :" + pad2(parseInt(f[0], 10)) : "every hour";
+  }
   if (!/^\d+$/.test(f[0]) || !/^\d+$/.test(f[1])) return "custom schedule";
   const at = pad2(parseInt(f[1], 10)) + ":" + pad2(parseInt(f[0], 10));
   if (f[4] === "*") return "every day at " + at;
@@ -202,10 +207,13 @@ function presetOf(expression) {
   if (cronProblem(text)) return "custom";
   const f = text.split(/\s+/);
   if (f[2] !== "*" || f[3] !== "*") return "custom";
-  if (f[1] === "*") return "hourly";
+  if (f[1] === "*") return /^\d+$/.test(f[0]) ? "hourly" : "custom";
+  if (!/^\d+$/.test(f[0]) || !/^\d+$/.test(f[1])) return "custom";
   if (f[4] === "1-5") return "weekdays";
   if (f[4] === "*") return "daily";
-  return "weekly";
+  // A list/step weekday (e.g. "1,3") has no weekly-picker equivalent; calling it weekly
+  // would coerce it to one day when the picker rebuilds the expression.
+  return /^\d+$/.test(f[4]) ? "weekly" : "custom";
 }
 
 function timeOf(expression) {
@@ -218,7 +226,12 @@ function timeOf(expression) {
 
 function weekdayOf(expression) {
   const f = String(expression || "").trim().split(/\s+/);
-  if (f.length === 5 && /^\d+$/.test(f[4])) return WEEKDAYS[parseInt(f[4], 10) % 7][0];
+  if (f.length === 5 && /^\d+$/.test(f[4])) {
+    // cron day-of-week is 0=Sunday..6=Saturday (7 is Sunday too); WEEKDAYS starts at Monday.
+    const dayName = DAY_NAMES[parseInt(f[4], 10) % 7];
+    const hit = WEEKDAYS.find((pair) => pair[1] === dayName);
+    return hit ? hit[0] : "mon";
+  }
   return "mon";
 }
 // Compact cards: the canvas is often 600px wide inside a window that already has a chat
@@ -241,7 +254,9 @@ function inPort(n) {
 }
 
 function edgeKey(from, to) {
-  return from + ">" + to;
+  // JSON, not "from>to": an id may itself contain '>', and the key is also parsed back
+  // when a selected edge is deleted. JSON keeps the pair unambiguous without a charset rule.
+  return JSON.stringify([from, to]);
 }
 
 function edgePath(parent, child) {
@@ -469,6 +484,9 @@ function createDesigner(host, call) {
   let channels = [];    // delivery targets ("chats") offered to output nodes
   let lastRun = null;
   let savedNames = [];  // names known to exist server-side; Run refuses a draft instead of 404ing
+  let designsLoaded = false;  // only gate Run once GET /designs actually succeeded
+  let sizeObserver = null;    // kept so an unmount can disconnect it
+  let gestureCleanup = null;  // cancels an in-flight drag/link on unmount or window blur
 
   function nodeById(id) {
     const hits = graph.nodes.filter((n) => n.id === id);
@@ -557,12 +575,15 @@ function createDesigner(host, call) {
   function watchSize() {
     if (typeof ResizeObserver !== "function") return;
     let width = el.wrap.clientWidth;
-    new ResizeObserver(() => {
+    sizeObserver = new ResizeObserver(() => {
+      // A detached wrap is not a resize: stop fitting a canvas nobody can see.
+      if (!el.wrap.isConnected) return;
       if (el.wrap.clientWidth !== width) {
         width = el.wrap.clientWidth;
         fit();
       }
-    }).observe(el.wrap);
+    });
+    sizeObserver.observe(el.wrap);
   }
 
   function draw() {
@@ -698,22 +719,46 @@ function createDesigner(host, call) {
       const start = svgPoint(ev);
       const offset = { x: start.x - n.x, y: start.y - n.y };
       let moved = false;
+      let frame = null;
+      // One redraw per animation frame, not one per pixel: draw() rebuilds the whole SVG.
+      function scheduleDraw() {
+        if (frame) return;
+        if (typeof requestAnimationFrame !== "function") { draw(); return; }
+        frame = requestAnimationFrame(() => { frame = null; draw(); });
+      }
+      function cleanup() {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.removeEventListener("pointercancel", cancel);
+        window.removeEventListener("blur", cancel);
+        if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
+        frame = null;
+        gestureCleanup = null;
+      }
+      // Released off-window / cancelled: never leave fitLocked stuck or a ghost on screen.
+      function cancel() {
+        cleanup();
+        fitLocked = false;
+        draw();
+      }
       function onMove(moveEv) {
         const p = svgPoint(moveEv);
         if (Math.abs(p.x - start.x) > 3 || Math.abs(p.y - start.y) > 3) moved = true;
         n.x = Math.max(0, Math.round(p.x - offset.x));
         n.y = Math.max(0, Math.round(p.y - offset.y));
-        draw();
+        scheduleDraw();
       }
       function onUp() {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
+        cleanup();
         fitLocked = false;
         if (!moved) pick(n.id);
         else draw();
       }
+      gestureCleanup = cancel;
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
+      document.addEventListener("pointercancel", cancel);
+      window.addEventListener("blur", cancel);
     });
   }
 
@@ -761,16 +806,36 @@ function createDesigner(host, call) {
     fitLocked = true;
     dragLink = { from: n.id, x1: origin.x, y1: origin.y, x2: start.x, y2: start.y };
     draw();
+    let frame = null;
+    function scheduleDraw() {
+      if (frame) return;
+      if (typeof requestAnimationFrame !== "function") { draw(); return; }
+      frame = requestAnimationFrame(() => { frame = null; draw(); });
+    }
+    function cleanup() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("blur", cancel);
+      if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
+      frame = null;
+      gestureCleanup = null;
+    }
+    function cancel() {
+      cleanup();
+      dragLink = null;
+      fitLocked = false;
+      draw();
+    }
     function onMove(moveEv) {
       const p = svgPoint(moveEv);
       if (Math.abs(p.x - start.x) > 3 || Math.abs(p.y - start.y) > 3) moved = true;
       dragLink.x2 = p.x;
       dragLink.y2 = p.y;
-      draw();
+      scheduleDraw();
     }
     function onUp(upEv) {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
+      cleanup();
       const from = dragLink.from;
       dragLink = null;
       fitLocked = false;
@@ -788,8 +853,11 @@ function createDesigner(host, call) {
       note("Now click the input port of the node that should run after " + from + ".");
       draw();
     }
+    gestureCleanup = cancel;
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
+    document.addEventListener("pointercancel", cancel);
+    window.addEventListener("blur", cancel);
   }
 
   /** Add the *from* -> *to* edge, refusing the three ways it could be wrong. */
@@ -832,8 +900,8 @@ function createDesigner(host, call) {
 
   function removeSelected() {
     if (selectedEdge) {
-      const parts = selectedEdge.split(">");
-      cutEdge(parts[0], parts[1]);
+      const pair = JSON.parse(selectedEdge);
+      cutEdge(pair[0], pair[1]);
       return;
     }
     if (!selected) {
@@ -1168,7 +1236,13 @@ function createDesigner(host, call) {
       reading.textContent = "scheduling\u2026";
       call(designPath(name) + "/schedule", {
         method: "POST",
-        body: { preset: "custom", cron: node.schedule },
+        // Same shape as the Schedules form, so the two call sites cannot drift.
+        body: {
+          preset: presetOf(node.schedule),
+          time: timeOf(node.schedule),
+          weekday: weekdayOf(node.schedule),
+          cron: node.schedule,
+        },
       }).then((data) => {
         if (!data || !data.ok) {
           reading.className = "vw-error";
@@ -1475,10 +1549,16 @@ function createDesigner(host, call) {
 
   /** Profiles ("bots") for the agent picker. A failure is not fatal: the picker just offers
    *  nothing and the model field stays typeable. */
+  /** Rebuild the drawer only when the user is not typing in it: a catalog response landing
+   *  mid-edit must not wipe the control and its cursor. */
+  function refreshInspector() {
+    if (!el.inspector.contains(document.activeElement)) buildInspector();
+  }
+
   function refreshProfiles() {
     return call("/profiles").then((data) => {
       profiles = (data && data.profiles) || [];
-      buildInspector();
+      refreshInspector();
     }).catch(() => {
       profiles = [];
     });
@@ -1489,7 +1569,7 @@ function createDesigner(host, call) {
   function refreshModels() {
     return call("/models").then((data) => {
       models = (data && data.providers) || [];
-      buildInspector();
+      refreshInspector();
     }).catch(() => {
       models = [];
     });
@@ -1500,7 +1580,7 @@ function createDesigner(host, call) {
   function refreshChannels() {
     return call("/channels").then((data) => {
       channels = (data && data.channels) || [];
-      buildInspector();
+      refreshInspector();
     }).catch(() => {
       channels = [];
     });
@@ -1531,8 +1611,15 @@ function createDesigner(host, call) {
   }
 
   /** "3m ago" — a waiting gate has to say how long it has waited. */
-  function ageText(seconds) {
-    const age = Math.max(0, Math.round(Date.now() / 1000 - Number(seconds || 0)));
+  function ageText(timestamp) {
+    // Accept epoch seconds, milliseconds and ISO strings; an unknown value says so instead
+    // of rendering "NaN d ago".
+    let when = typeof timestamp === "string"
+      ? Date.parse(timestamp) / 1000
+      : Number(timestamp || 0);
+    if (!Number.isFinite(when) || when <= 0) return "unknown age";
+    if (when > 1e11) when /= 1000;
+    const age = Math.max(0, Math.round(Date.now() / 1000 - when));
     if (age < 60) return age + "s ago";
     if (age < 3600) return Math.round(age / 60) + "m ago";
     if (age < 86400) return Math.round(age / 3600) + "h ago";
@@ -1785,6 +1872,21 @@ function createDesigner(host, call) {
     });
     form.appendChild(field("workflow", pick, TIPS["bar.name"]));
 
+    // One reading, recomputed from the live picker state. Computing it once at render and
+    // closing over it made "change the time, press Schedule" submit the old expression.
+    const reading = document.createElement("p");
+    reading.title = TIPS["trigger.schedule"];
+    function currentExpression() {
+      return buildCron(schedPreset, schedTime, schedDay, schedCron);
+    }
+    function refreshReading() {
+      const expression = currentExpression();
+      const problem = cronProblem(expression);
+      reading.className = problem ? "vw-error" : "vw-hint";
+      reading.textContent = problem ? "" : describeCron(expression) + "  (" + expression + ")";
+      return expression;
+    }
+
     const presetSelect = document.createElement("select");
     PRESETS.forEach((name) => {
       const option = document.createElement("option");
@@ -1812,6 +1914,7 @@ function createDesigner(host, call) {
       });
       day.addEventListener("change", () => {
         schedDay = day.value;
+        refreshReading();
       });
       form.appendChild(field("day", day, TIPS["trigger.weekday"]));
     }
@@ -1820,6 +1923,7 @@ function createDesigner(host, call) {
     if (schedPreset !== "custom") {
       const time = textInput(schedTime, (v) => {
         schedTime = v;
+        refreshReading();
       }, "09:00");
       form.appendChild(field("time (24h)", time, TIPS["trigger.time"]));
     }
@@ -1827,16 +1931,12 @@ function createDesigner(host, call) {
     if (schedPreset === "custom") {
       const cron = textInput(schedCron, (v) => {
         schedCron = v;
+        refreshReading();
       }, "0 9 * * 1-5");
       form.appendChild(field("cron (advanced)", cron, TIPS["trigger.schedule"]));
     }
 
-    const expression = buildCron(schedPreset, schedTime, schedDay, schedCron);
-    const reading = document.createElement("p");
-    const problem = cronProblem(expression);
-    reading.className = problem ? "vw-error" : "vw-hint";
-    reading.textContent = problem ? "" : describeCron(expression) + "  (" + expression + ")";
-    reading.title = TIPS["trigger.schedule"];
+    refreshReading();
     form.appendChild(reading);
 
     const go = button("Schedule it", () => {
@@ -1845,6 +1945,8 @@ function createDesigner(host, call) {
         reading.textContent = "pick a workflow first";
         return;
       }
+      // Rebuild from the live fields: the rendering-time expression may be stale.
+      const expression = refreshReading();
       const issue = cronProblem(expression);
       if (issue) {
         reading.className = "vw-error";
@@ -1911,9 +2013,12 @@ function createDesigner(host, call) {
       // Run needs to know which names exist server-side, so a draft is refused with a
       // sentence instead of a 404 nobody sees.
       savedNames = designs.slice();
+      designsLoaded = true;
       el.railError.textContent = "";
       renderDesigns();
     }).catch((err) => {
+      // Leave designsLoaded alone: an initial failure means Run must not gate on an
+      // empty cache (the POST will return the authoritative 404).
       el.railError.textContent = explain(err);
     });
   }
@@ -2012,6 +2117,9 @@ function createDesigner(host, call) {
         return;
       }
       active = name;
+      // A refresh is async; remember this name now so pressing Run immediately after Save
+      // cannot be refused as "not saved yet".
+      if (savedNames.indexOf(data.name) < 0) savedNames.push(data.name);
       showErrors([]);
       note("saved " + data.name + " (" + data.nodes + " node(s))");
       banner("Saved \u201c" + data.name + "\u201d \u00b7 " + data.nodes + " node(s).", "info");
@@ -2031,7 +2139,8 @@ function createDesigner(host, call) {
       return;
     }
     // A draft that was never saved has no server-side design to run: saying so beats a 404.
-    if (!savedNames.includes(name)) {
+    // Only gate once the list has actually loaded; before that the POST is authoritative.
+    if (designsLoaded && !savedNames.includes(name)) {
       showErrors([{ node: "", field: "name", msg: name + " is not saved yet" }]);
       note("not run");
       banner("\u201c" + name + "\u201d is not saved yet \u2014 press Save, then Run.", "error");
@@ -2347,7 +2456,17 @@ function createDesigner(host, call) {
 
   /** Replace the canvas with a stored graph (or a blank one). */
   function loadGraph(next) {
-    graph = clone(next && next.nodes ? next : BLANK);
+    // A saved design / template is untrusted input: a non-list `nodes` used to reach
+    // layout() and throw, leaving a blank canvas with no explanation.
+    const usable = next && typeof next === "object" && Array.isArray(next.nodes)
+      && next.nodes.length;
+    graph = clone(usable ? next : BLANK);
+    graph.nodes = graph.nodes.filter((n) => n && typeof n === "object"
+      && typeof n.id === "string" && n.id);
+    graph.nodes.forEach((n) => {
+      n.after = Array.isArray(n.after) ? n.after.filter((dep) => typeof dep === "string") : [];
+      if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) { delete n.x; delete n.y; }
+    });
     if (!graph.name) graph.name = "untitled";
     selected = null;
     selectedEdge = null;
@@ -2381,7 +2500,17 @@ function createDesigner(host, call) {
   refreshModels();
   refreshChannels();
 
-  return { loadGraph: loadGraph, getGraph: payloadGraph };
+  /** Release what the mount owns: the size observer and any in-flight drag listeners. */
+  function destroy() {
+    if (gestureCleanup) gestureCleanup();
+    if (sizeObserver) {
+      sizeObserver.disconnect();
+      sizeObserver = null;
+    }
+    el.inspector.textContent = "";
+  }
+
+  return { loadGraph: loadGraph, getGraph: payloadGraph, destroy: destroy };
 }
 
 /**
@@ -2391,9 +2520,19 @@ function createDesigner(host, call) {
  * it with null on unmount instead of remounting the canvas on every host re-render.
  */
 function createWorkflowsPage(call) {
+  let mounted = null;
+
   function mount(node) {
-    if (!node || node.__vwDesigner) return;
+    if (!node) {
+      // ref(null): React has detached the page, so the observer and drag listeners must go
+      // too. Without this, fit() kept running against a canvas nobody could see.
+      if (mounted && mounted.__vwDesigner) mounted.__vwDesigner.destroy();
+      mounted = null;
+      return;
+    }
+    if (node.__vwDesigner) { mounted = node; return; }
     node.__vwDesigner = createDesigner(node, call);
+    mounted = node;
   }
 
   return function WorkflowsPage() {

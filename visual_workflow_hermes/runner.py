@@ -68,11 +68,15 @@ def render_context(step: dict, outputs: dict) -> str:
         ref = str(raw or "").strip()
         if not ref or ref in used:
             continue
-        node, _, path = ref.partition(".")
-        if node not in outputs:
+        # Longest known node id prefix wins, exactly like evaluate_condition: an id may
+        # contain dots, and splitting on the first one would resolve ``a.b.c`` as node ``a``.
+        node = next((n for n in sorted(outputs, key=len, reverse=True)
+                     if ref == n or ref.startswith(f"{n}.")), None)
+        if node is None:
             raise StepError(
-                f"agent input {ref!r} references node {node!r} that has not produced output"
+                f"agent input {ref!r} references a node that has not produced output"
             )
+        path = ref[len(node) + 1:] if ref != node else ""
         value = outputs[node] if not path else _dig(outputs[node], path)
         blocks.append(_context_block(ref, value))
         used.add(ref)
@@ -165,6 +169,10 @@ def _spawn_with_retries(spawn, step: dict, state: dict) -> dict:
         state.setdefault("attempts", {})[step["id"]] = attempts
         try:
             produced = spawn(step, state["outputs"], state) or {}
+            if not isinstance(produced, dict):
+                raise StepError(
+                    f"agent step returned {type(produced).__name__}, expected an object"
+                )
             if produced.get("error"):
                 err = StepError(str(produced["error"]))
                 # The diagnosis travels with the failure signal: the retry policy below keys
@@ -222,7 +230,12 @@ def run_plan(plan: dict, state: dict, spawn=None, on_step=None, deliver=None) ->
                         on_step(state)
                     return state
                 produced = _spawn_with_retries(spawn, step, state)
-                state["outputs"][sid] = produced.get("structured") or produced.get("output", "")
+                # Key presence, not truthiness: an agent may legitimately return 0/False/{}
+                # as its structured payload, and ``or`` would silently replace it with "".
+                if produced.get("structured") is not None:
+                    state["outputs"][sid] = produced["structured"]
+                else:
+                    state["outputs"][sid] = produced.get("output", "")
             elif kind == "condition":
                 if not evaluate_condition(step["expression"], state["outputs"], node_ids):
                     state["skipped"].append(sid)
@@ -231,16 +244,23 @@ def run_plan(plan: dict, state: dict, spawn=None, on_step=None, deliver=None) ->
                         on_step(state)
                     continue
             elif kind == "approval":
-                state["status"] = "awaiting_approval"
                 pending = {"node_id": sid, "question": step.get("question", ""),
                            "options": step.get("options", []),
                            "context": step.get("context", ""),
                            "waiting_since": time.time()}
                 # The timeout travels with the pause: check_timeouts(state) has no plan to
                 # consult, and a gate must be answerable long after the process is gone.
+                # Validate before mutating status, so a malformed value is a normal failed
+                # step (StepError) instead of a half-paused run with no pending element.
                 if step.get("timeout_minutes"):
-                    pending["timeout_minutes"] = int(step["timeout_minutes"])
+                    try:
+                        pending["timeout_minutes"] = int(step["timeout_minutes"])
+                    except (TypeError, ValueError) as exc:
+                        raise StepError(
+                            f"bad timeout_minutes {step.get('timeout_minutes')!r}: {exc}"
+                        ) from exc
                     pending["on_timeout"] = str(step.get("on_timeout") or "reject")
+                state["status"] = "awaiting_approval"
                 state["pending"] = pending
                 if on_step:
                     on_step(state)
@@ -268,6 +288,15 @@ def run_plan(plan: dict, state: dict, spawn=None, on_step=None, deliver=None) ->
                 if hint:
                     failure["hint"] = hint
             state["error"] = failure
+            if on_step:
+                on_step(state)
+            return state
+        except Exception as exc:
+            # A spawn/hook/state bug is not a reason to leave the run looking in-flight: an
+            # unrecorded ``running`` is not retryable and can never be resumed.
+            state["status"] = "failed"
+            state["error"] = {"node_id": sid,
+                              "msg": f"unexpected error: {type(exc).__name__}: {exc}"}
             if on_step:
                 on_step(state)
             return state
@@ -346,18 +375,27 @@ def resume_plan(plan: dict, state: dict, answer, spawn=None, on_step=None, deliv
             on_step(state)
         raise StepError((state.get("error") or {}).get("msg") or "the approval gate timed out")
     node_id = pending["node_id"]
-    step = next((s for s in plan["steps"] if s["id"] == node_id), None)
-    if step is None:
+    index = next((i for i, s in enumerate(plan["steps"]) if s["id"] == node_id), None)
+    if index is None:
         raise StepError(f"paused step {node_id!r} is not in the plan")
+    step = plan["steps"][index]
     if step["kind"] == "approval":
         # Validate BEFORE mutating, so a rejected answer leaves the run resumable.
         if step.get("options") and answer not in step["options"]:
             raise StepError(f"answer {answer!r} is not one of {step['options']}")
         state["answers"] = {**state.get("answers", {}), node_id: answer}
         state["outputs"][node_id] = answer
-    else:
+    elif step["kind"] == "agent":
+        if answer is None:
+            raise StepError(f"agent step {node_id!r} needs an answer to resume with")
         state["outputs"][node_id] = answer
-    state["cursor"] += 1
+    else:
+        raise StepError(
+            f"paused step {node_id!r} has unexpected kind {step['kind']!r}; the design changed"
+        )
+    # Re-derive the cursor from the paused id: trusting the stored position would skip or
+    # repeat the wrong step if the plan was edited between pause and resume.
+    state["cursor"] = index + 1
     state["pending"] = None
     state["status"] = "running"
     return run_plan(plan, state, spawn=spawn, on_step=on_step, deliver=deliver)

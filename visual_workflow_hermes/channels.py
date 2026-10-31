@@ -33,17 +33,21 @@ def _home() -> Path:
 def _directory(home: Optional[Path] = None) -> dict:
     """``{"platforms": {<platform>: [{id, name, type}, ...]}}``; ``{}`` when unreadable.
 
-    The host function is preferred (it re-applies aliases and session discovery); the on-disk
-    file is the fallback for a process where ``gateway`` cannot be imported (plain tooling).
+    An explicit *home* is authoritative: the caller asked for that directory (a test, or a
+    profile-scoped dashboard request), so reading the process-global live directory instead
+    would silently answer for the wrong home. Without one, the host function is preferred
+    (it re-applies aliases and session discovery); the on-disk file is the fallback for a
+    process where ``gateway`` cannot be imported (plain tooling).
     """
-    try:
-        from gateway.channel_directory import load_directory
+    if home is None:
+        try:
+            from gateway.channel_directory import load_directory
 
-        data = load_directory()
-        if isinstance(data, dict):
-            return data
-    except Exception:
-        pass
+            data = load_directory()
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
     try:
         raw = (Path(home) if home else _home()) / "channel_directory.json"
         data = json.loads(raw.read_text(encoding="utf-8-sig"))
@@ -78,8 +82,10 @@ def list_delivery_targets(home: Optional[Path] = None) -> list[dict]:
                     "platform": name,
                 }
             )
-        # A platform the gateway has traffic for implies a configured bot, so its home channel
-        # is a real target. Discovery may simply not have seen a chat yet.
+        # Offer the home channel only once discovery found a real chat on this platform: an
+        # empty (or all-invalid) entry list may be a stale key with no configured bot, and
+        # `available` must not claim a target that cannot be reached. A discovered chat is the
+        # proof that this platform's home channel is real.
         if found:
             out.append(
                 {

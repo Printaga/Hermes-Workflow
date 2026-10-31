@@ -6,7 +6,11 @@ The import must work in two contexts:
   * pytest and plain tooling import this directory as a top-level ``__init__`` module, where
     there is no parent package — hence the absolute fallback.
 """
-try:  # host loader: this file is ``<plugin pkg>.__init__``
+if __package__:
+    # Host loader: this file is ``<plugin pkg>.__init__``, so the relative import is the
+    # only correct one. Branching on ``__package__`` (rather than catching ImportError)
+    # means an ImportError raised *inside* the package is never masked by a second import
+    # of a same-named module somewhere else on sys.path.
     from .visual_workflow_hermes import register  # noqa: F401
-except ImportError:  # imported as a top-level module (tests, `hermes plugins doctor` probe)
+else:  # imported as a top-level module (tests, `hermes plugins doctor` probe)
     from visual_workflow_hermes import register  # noqa: F401

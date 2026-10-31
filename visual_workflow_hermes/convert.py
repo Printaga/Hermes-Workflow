@@ -24,9 +24,32 @@ def topological_order(steps: list[dict]) -> list[dict]:
     Kahn's algorithm with a stable tie-break, so the same designer JSON always yields the
     same run order (the widget's node order decides). Raises ValueError on a cycle.
     """
+    # An id is the step's identity: a missing or duplicate one would silently drop work
+    # from the plan (dict comprehensions keep only the last). Fail loudly instead.
+    for step in steps:
+        if not isinstance(step, dict) or not isinstance(step.get("id"), str) \
+                or not step["id"].strip():
+            raise ValueError(f"step is missing a non-empty string 'id': {step!r}")
+    ids = [s["id"] for s in steps]
+    duplicate_ids = sorted({i for i in ids if ids.count(i) > 1})
+    if duplicate_ids:
+        raise ValueError(f"duplicate step ids: {', '.join(duplicate_ids)}")
     by_id = {s["id"]: s for s in steps}
     index = {s["id"]: i for i, s in enumerate(steps)}
-    deps = {nid: [p for p in (s.get("after") or []) if p in by_id] for nid, s in by_id.items()}
+    deps: dict[str, list[str]] = {}
+    for nid, step in by_id.items():
+        parents = step.get("after") or []
+        if not isinstance(parents, list):
+            raise ValueError(f"step {nid!r} has a non-list 'after'")
+        # A dangling parent used to be filtered out, silently turning a broken edge into a
+        # ready root. The plan builder only strips trigger/note references, so anything
+        # else here is a typo the caller must fix.
+        unknown = [p for p in parents if not isinstance(p, str) or p not in by_id]
+        if unknown:
+            raise ValueError(
+                f"step {nid!r} depends on unknown step(s): {', '.join(map(repr, unknown))}"
+            )
+        deps[nid] = list(parents)
     ordered: list[dict] = []
     done: set[str] = set()
     while len(ordered) < len(by_id):
@@ -82,6 +105,10 @@ def build_run_plan(designer: dict) -> dict:
                 step["deliver"] = str(n["deliver"]).strip().lower()
             if n.get("target"):
                 step["target"] = str(n["target"]).strip()
+        else:
+            # Unknown/missing type: a payload-less step would still enter the plan and run
+            # as an error at best, so reject it while the graph is being converted.
+            raise ValueError(f"unknown node type {kind!r} for node {n.get('id')!r}")
         steps.append(step)
     if not steps:
         raise ValueError("design has no executable nodes (only a trigger)")

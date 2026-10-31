@@ -30,7 +30,15 @@ def render_text(run_name: str, node_id: str, payload) -> str:
     if isinstance(payload, dict) and payload:
         lines = []
         for key, value in payload.items():
-            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+            if isinstance(value, str):
+                text = value
+            else:
+                try:
+                    text = json.dumps(value, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    # A set/bytes/custom object must not turn delivery into an exception;
+                    # this function is documented as never raising.
+                    text = str(value)
             lines.append(f"- {key}: {text}")
         body = "\n".join(lines)
     elif payload in (None, {}, []):
@@ -57,7 +65,9 @@ def send_text(target: str, text: str) -> dict:
         try:
             data = json.loads(raw or "{}")
         except (ValueError, TypeError):
-            data = {}
+            # A plain-text error from the seam is the only diagnosis available; keep it
+            # instead of reducing the receipt to a generic "send failed".
+            data = {"error": raw} if raw else {}
     if isinstance(data, dict) and data.get("success"):
         return {"target": target, "ok": True, "detail": str(data.get("note") or "sent")}
     detail = (data or {}).get("error") if isinstance(data, dict) else raw

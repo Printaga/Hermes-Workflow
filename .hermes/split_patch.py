@@ -5,12 +5,13 @@ added/removed lines, so the four items can be reviewed (and reverted) independen
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
 
-PATCH = Path("/tmp/all.patch")
-OUT = Path("/tmp/items")
+PATCH = Path(os.environ.get("PATCH_FILE") or "/tmp/all.patch")
+OUT = Path(os.environ.get("PATCH_OUTDIR") or "/tmp/items")
 
 # Ordered rules: the first match wins. Order matters where a hunk mentions two concerns.
 RULES = [
@@ -23,13 +24,14 @@ RULES = [
         r'"provider"|provider \(|agent\.provider|profiles\.provider')),
     # item 2 — the node bar must not grow vertically.
     ("item2", re.compile(r"vw-kit\{|kit \{|flex: 0 0 auto|flex:0 0 auto|node bar")),
-    # item 1 — a run/validate outcome the user cannot miss.
+    # item 1 — a run/validate outcome the user cannot miss. The quote may be plain or escaped.
     ("item1", re.compile(
-        r"banner|is not saved|Validate failed|Run failed|paused|aria-live|role=\\\\?\"status")),
+        r"banner|is not saved|Validate failed|Run failed|paused|aria-live|role=\\?\"status")),
 ]
 
 HUNK_RE = re.compile(r"^@@ ")
-FILE_RE = re.compile(r"^diff --git a/(\S+) b/(\S+)$")
+# git quotes paths containing spaces/special characters: `diff --git "a/foo bar" "b/foo bar"`.
+FILE_RE = re.compile(r'^diff --git "?a/(.+?)"? "?b/(.+?)"?$')
 
 
 def main() -> int:
@@ -41,15 +43,15 @@ def main() -> int:
         if FILE_RE.match(line):
             header = [line]
             size = 0
-        elif line.startswith("index ") or line.startswith("--- ") or line.startswith("+++ "):
-            header.append(line)
         elif HUNK_RE.match(line):
             size += 1
             files.append(("\n".join(h.rstrip("\n") for h in header), [line]))
         elif size:
             files[-1][1].append(line)
-        else:  # pragma: no cover - unexpected diff preamble
-            print("?? unhandled line:", line[:80])
+        elif not line.startswith("diff --git"):
+            # Every pre-hunk metadata line (new/deleted file mode, rename/copy, similarity,
+            # binary marker) belongs to the file header; dropping it corrupts those patches.
+            header.append(line)
 
     buckets: dict[str, list[tuple[str, list[str]]]] = {}
     for head, body in files:
@@ -63,7 +65,10 @@ def main() -> int:
         first = body[0].strip()
         print(f"{item:6} {head.split('/')[-1]:16} {first[:60]}")
 
-    OUT.mkdir(exist_ok=True)
+    OUT.mkdir(parents=True, exist_ok=True)
+    # A bucket with zero hunks this run must not leave last run's file looking current.
+    for stale in OUT.glob("*.patch"):
+        stale.unlink()
     for item, chunks in buckets.items():
         parts = []
         for head, body in chunks:

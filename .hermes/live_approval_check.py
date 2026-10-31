@@ -4,11 +4,16 @@ Not a test (pytest never sends anything): this is the operator-approved live run
 paused run named on the command line and prints the delivery receipt.
 """
 import json
+import os
 import sys
 import uuid
+from pathlib import Path
 
-sys.path.insert(0, "/home/lenovo/Development/Hermes-Workflow")  # this checkout
-sys.path.insert(0, "/home/lenovo/.hermes/hermes-agent")  # the host send seam lives here
+HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+_REPO = str(Path(__file__).resolve().parents[1])  # this checkout
+for _p in (_REPO, str(HOME / "hermes-agent")):  # the host send seam lives in the agent tree
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from visual_workflow_hermes.convert import build_run_plan
 from visual_workflow_hermes.delivery import deliver_output
@@ -44,6 +49,13 @@ def resume(rid, answer):
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["resume"]:  # resume <run_id> <answer>
+        if len(sys.argv) != 4:
+            print(f"usage: {sys.argv[0]} [resume <run_id> <answer>]", file=sys.stderr)
+            sys.exit(2)
         resume(sys.argv[2], sys.argv[3])
-    else:
+    elif len(sys.argv) == 1:
         start()
+    else:
+        # A typo must not silently start a fresh live run with real delivery side effects.
+        print(f"usage: {sys.argv[0]} [resume <run_id> <answer>]", file=sys.stderr)
+        sys.exit(2)

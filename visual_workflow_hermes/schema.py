@@ -35,6 +35,23 @@ MAX_NODES = 50
 # expression fails at design time rather than mid-run.
 _WHEN_RE = re.compile(r"^out\.[A-Za-z0-9_.-]+\s*(==|!=|>=|<=|>|<)\s*.+$")
 
+def _whole_number(value):
+    """*value* as an int when it is genuinely whole, else None.
+
+    ``int(2.5)`` truncates and ``int(True)`` is 1, so a plain ``int()`` would silently
+    accept a malformed design; bools and non-integral floats are not counts.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()):
+        return int(value.strip())
+    return None
+
+
 REQUIRED_FIELDS = {
     "trigger": ("trigger_mode",),
     "agent": ("prompt",),
@@ -50,6 +67,8 @@ def validate_designer_graph(graph: dict) -> list[dict]:
     if not isinstance(graph, dict):
         return [{"node": "", "field": "graph", "msg": "graph must be an object"}]
     nodes = graph.get("nodes", [])
+    if not isinstance(nodes, list):
+        return [{"node": "", "field": "nodes", "msg": "nodes must be a list"}]
     if not nodes:
         errors.append({"node": "", "field": "nodes", "msg": "workflow needs at least one node"})
         return errors
@@ -58,11 +77,25 @@ def validate_designer_graph(graph: dict) -> list[dict]:
                        "msg": f"design capped at {MAX_NODES} nodes, got {len(nodes)}"})
     # Layout positions x/y are optional and always preserved — the widget round-trips
     # them, the validator ignores them. Never reject on x/y.
-    ids = [n.get("id") for n in nodes if isinstance(n, dict)]
+    #
+    # An id is the graph's identity: every edge and condition names one, so a missing or
+    # non-string id is a defect here rather than an ambiguous "node: ''" later. Collecting
+    # only valid ids also keeps ``set(ids)`` safe (a list/dict id is unhashable).
+    ids: list[str] = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        node_id = n.get("id")
+        if not isinstance(node_id, str) or not node_id.strip():
+            errors.append({"node": str(node_id or ""), "field": "id",
+                           "msg": "node id must be a non-empty string"})
+            continue
+        ids.append(node_id)
     if len(set(ids)) != len(ids):
         errors.append({"node": "", "field": "nodes", "msg": "node ids must be unique"})
     note_ids = {n.get("id") for n in nodes
-                if isinstance(n, dict) and n.get("type") == NOTE_KIND}
+                if isinstance(n, dict) and n.get("type") == NOTE_KIND
+                and isinstance(n.get("id"), str)}
     triggers = [n for n in nodes if isinstance(n, dict) and n.get("type") == "trigger"]
     if len(triggers) != 1:
         errors.append({"node": "", "field": "trigger",
@@ -71,7 +104,8 @@ def validate_designer_graph(graph: dict) -> list[dict]:
         if not isinstance(n, dict):
             errors.append({"node": "", "field": "node", "msg": "node must be an object"})
             continue
-        nid, kind = n.get("id", ""), n.get("type")
+        nid = n.get("id") if isinstance(n.get("id"), str) else ""
+        kind = n.get("type")
         if kind == NOTE_KIND:
             # Informative only: no required fields, no connectivity, no cycle participation.
             if n.get("after"):
@@ -94,8 +128,16 @@ def validate_designer_graph(graph: dict) -> list[dict]:
         if kind == "trigger" and n.get("trigger_mode") not in TRIGGER_MODES:
             errors.append({"node": nid, "field": "trigger_mode",
                            "msg": f"trigger_mode must be one of {TRIGGER_MODES}"})
-        for dep in n.get("after", []) or []:
-            if dep in note_ids:
+        raw_after = n.get("after", []) or []
+        if not isinstance(raw_after, list):
+            errors.append({"node": nid, "field": "after",
+                           "msg": "after must be a list of node ids"})
+            raw_after = []
+        for dep in raw_after:
+            if not isinstance(dep, str):
+                errors.append({"node": nid, "field": "after",
+                               "msg": f"dependency {dep!r} must be a node id"})
+            elif dep in note_ids:
                 errors.append({"node": nid, "field": "after",
                                "msg": f"{dep!r} is a note and cannot be a dependency"})
             elif dep not in ids:
@@ -121,39 +163,50 @@ def validate_designer_graph(graph: dict) -> list[dict]:
         if kind == "agent":
             retries = n.get("retries")
             if retries not in (None, ""):
-                try:
-                    count = int(retries)
-                except (TypeError, ValueError):
+                count = _whole_number(retries)
+                if count is None:
                     errors.append({"node": nid, "field": "retries",
                                    "msg": "retries must be a whole number of extra attempts"})
-                else:
-                    if count < 0 or count > MAX_RETRIES:
-                        errors.append({"node": nid, "field": "retries",
-                                       "msg": f"retries must be 0..{MAX_RETRIES}"})
+                elif count < 0 or count > MAX_RETRIES:
+                    errors.append({"node": nid, "field": "retries",
+                                   "msg": f"retries must be 0..{MAX_RETRIES}"})
         if kind == "approval":
             timeout = n.get("timeout_minutes")
             if timeout not in (None, ""):
-                try:
-                    minutes = int(timeout)
-                except (TypeError, ValueError):
+                minutes = _whole_number(timeout)
+                if minutes is None:
                     errors.append({"node": nid, "field": "timeout_minutes",
                                    "msg": "timeout_minutes must be a whole number of minutes"})
-                else:
-                    if minutes <= 0 or minutes > MAX_TIMEOUT_MINUTES:
-                        errors.append({
-                            "node": nid, "field": "timeout_minutes",
-                            "msg": f"timeout_minutes must be 1..{MAX_TIMEOUT_MINUTES}",
-                        })
+                elif minutes <= 0 or minutes > MAX_TIMEOUT_MINUTES:
+                    errors.append({
+                        "node": nid, "field": "timeout_minutes",
+                        "msg": f"timeout_minutes must be 1..{MAX_TIMEOUT_MINUTES}",
+                    })
             policy = n.get("on_timeout")
             if policy not in (None, "") \
                     and str(policy).strip().lower() not in ON_TIMEOUT:
                 errors.append({"node": nid, "field": "on_timeout",
                                "msg": f"on_timeout must be one of {ON_TIMEOUT} or empty"})
-        if kind == "condition" and n.get("expression") \
-                and not _WHEN_RE.match(str(n["expression"]).strip()):
-            errors.append({"node": nid, "field": "expression",
-                           "msg": "expression must look like 'out.<node>.<field> <op> <value>' "
-                                  "(op: == != > >= < <=)"})
+        if kind == "condition" and n.get("expression"):
+            expression = str(n["expression"]).strip()
+            if not _WHEN_RE.match(expression):
+                errors.append({"node": nid, "field": "expression",
+                               "msg": "expression must look like 'out.<node>.<field> <op> "
+                                      "<value>' (op: == != > >= < <=)"})
+            else:
+                # The expression names an upstream output. A typo is a design defect that
+                # would otherwise only surface mid-run; ids may contain dots, so match the
+                # longest known id (the runner resolves refs the same way).
+                target = re.split(r"\s*(?:>=|<=|==|!=|>|<)\s*", expression[4:], maxsplit=1)[0]
+                ref = next((i for i in sorted(ids, key=len, reverse=True)
+                            if target == i or target.startswith(f"{i}.")), None)
+                if ref is None:
+                    errors.append({"node": nid, "field": "expression",
+                                   "msg": f"expression references unknown node in "
+                                          f"{target!r}"})
+                elif ref in note_ids:
+                    errors.append({"node": nid, "field": "expression",
+                                   "msg": "a note has no output to test"})
     if not errors:
         # Cycle check (DFS over after-edges). A cycle would hang the runner.
         visiting: set = set()
@@ -166,7 +219,12 @@ def validate_designer_graph(graph: dict) -> list[dict]:
                 return stack + [nid]
             visiting.add(nid)
             node = next((x for x in nodes if isinstance(x, dict) and x.get("id") == nid), None)
-            for dep in (node.get("after", []) if node else []) or []:
+            raw = (node.get("after", []) if node else []) or []
+            if not isinstance(raw, list):
+                return None
+            for dep in raw:
+                if not isinstance(dep, str):
+                    continue
                 cyc = _visit(dep, stack + [nid])
                 if cyc:
                     return cyc

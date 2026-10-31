@@ -15,6 +15,7 @@ redraw of the drawer (or a workflow step launch) from rebuilding it per request.
 """
 from __future__ import annotations
 
+import copy
 import time
 from typing import Optional
 
@@ -32,11 +33,13 @@ def list_host_models(refresh: bool = False) -> dict:
     unusable), which is the canvas' cue to fall back to free-text.
     """
     global _cache
+    # The cache is shared process-wide: hand every caller its own copy, or one route that
+    # mutates the payload poisons the catalog for everyone until the TTL expires.
     if not refresh and _cache is not None and time.monotonic() - _cache[0] < _CACHE_TTL_S:
-        return _cache[1]
+        return copy.deepcopy(_cache[1])
     payload = _read_catalog()
     _cache = (time.monotonic(), payload)
-    return payload
+    return copy.deepcopy(payload)
 
 
 def clear_cache() -> None:

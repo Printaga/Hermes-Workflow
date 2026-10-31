@@ -60,10 +60,11 @@ def _home() -> Path:
     importable (it honours the dashboard's per-request profile scope), else ``$HERMES_HOME``."""
     try:
         from hermes_constants import get_hermes_home
-
-        return Path(get_hermes_home())
-    except Exception:
+    except ImportError:  # host not importable (tests, plain tooling)
         return Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+    # Do not swallow an error from get_hermes_home(): silently falling back to another
+    # directory would split designs/runs between homes and make them look vanished.
+    return Path(get_hermes_home())
 
 
 def _designs() -> DesignStore:
@@ -166,6 +167,9 @@ def list_designs() -> dict:
 # learn from. Read straight from ``examples/`` at request time: one file is the single source of
 # truth for the JSON, the template list, and the tests that validate every example.
 TEMPLATES_DIR = _PLUGIN_ROOT / "examples"
+if not TEMPLATES_DIR.is_dir():
+    # An installed wheel carries the examples as data files under the environment prefix.
+    TEMPLATES_DIR = Path(sys.prefix) / "examples"
 _SUFFIX = ".designer.json"
 
 
@@ -218,10 +222,12 @@ def save_design(name: str, payload: dict = Body(...)) -> dict:
     if errors:
         return {"ok": False, "name": name, "errors": errors}
     try:
-        path = _designs().save(name, graph)
+        _designs().save(name, graph)
     except ValueError as exc:  # the name itself is malformed
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True, "name": name, "path": str(path), "nodes": len(graph.get("nodes", []))}
+    # No absolute server path: the canvas uses name/nodes, and the layout of $HERMES_HOME is
+    # not something an API client needs to learn.
+    return {"ok": True, "name": name, "nodes": len(graph.get("nodes", []))}
 
 
 @router.post("/designs/{name}/validate")

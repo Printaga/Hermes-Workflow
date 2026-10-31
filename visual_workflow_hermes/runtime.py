@@ -9,6 +9,7 @@ The ``register()`` entry point wraps them to the real host result contract
 from __future__ import annotations
 
 import json
+import sys
 import uuid
 from pathlib import Path
 
@@ -133,7 +134,14 @@ class WorkflowDesignerRuntime:
 
     @staticmethod
     def _widget_hint() -> str:
-        path = Path(__file__).resolve().parent.parent / "widgets" / "designer.html"
+        relative = Path("widgets") / "designer.html"
+        # Source checkout first; an installed wheel carries the canvas as a data file under
+        # the environment prefix (see pyproject.toml), so the hint stays real after install.
+        for root in (Path(__file__).resolve().parent.parent, Path(sys.prefix)):
+            path = root / relative
+            if path.is_file():
+                return f'::preview{{file="{path}"}}'
+        path = Path(__file__).resolve().parent.parent / relative
         return f'::preview{{file="{path}"}}'
 
     def _cmd_list(self) -> str:
@@ -187,8 +195,18 @@ class WorkflowDesignerRuntime:
 
     def _describe(self, result: dict) -> str:
         """Render a tool result as chat text, including the exact resume command."""
-        if not result.get("ok") and result.get("error"):
-            return f"run failed: {result['error']}"
+        if not result.get("ok"):
+            if result.get("error"):
+                return f"run failed: {result['error']}"
+            problems = result.get("errors") or []
+            if problems:
+                detail = "\n".join(
+                    f"  {e.get('node') or '-'}:{e.get('field')}: {e.get('msg')}"
+                    for e in problems if isinstance(e, dict)
+                )
+                return f"validation failed:\n{detail}"
+            # A refusal that carries neither key must still not read as a successful run.
+            return f"run failed: {result.get('status') or 'no result'}"
         status = result.get("status")
         pending = result.get("pending") or {}
         head = f"run {result.get('run_id')}: {status}"
@@ -274,7 +292,7 @@ class WorkflowDesignerRuntime:
         if retry_id:
             return self._tool_run_retry(retry_id)
         from .convert import build_run_plan
-        from .runner import new_state, run_plan
+        from .runner import StepError, new_state, run_plan
         from .schema import validate_designer_graph
 
         name = args.get("name") or ""
@@ -285,15 +303,18 @@ class WorkflowDesignerRuntime:
         errors = validate_designer_graph(designer)
         if errors:
             return {"ok": False, "errors": errors}
+        # The tool contract is a plain dict, never a raise into the dispatcher: plan
+        # building, the first save, and a corrupt-state KeyError all stay here.
         try:
             plan = build_run_plan(designer)
-        except ValueError as exc:
+            run_id = uuid.uuid4().hex[:12]
+            state = new_state(plan, run_id)
+            runs = self._runs()
+            runs.save(state)
+            state = run_plan(plan, state, spawn=_subagent_spawn(self.ctx),
+                             on_step=runs.save, deliver=_deliver)
+        except (StepError, ValueError, TypeError, FileNotFoundError, OSError, KeyError) as exc:
             return {"ok": False, "error": str(exc)}
-        run_id = uuid.uuid4().hex[:12]
-        state = new_state(plan, run_id)
-        self._runs().save(state)
-        state = run_plan(plan, state, spawn=_subagent_spawn(self.ctx),
-                         on_step=self._runs().save, deliver=_deliver)
         return self._result(state)
 
     def _tool_run_retry(self, run_id: str) -> dict:
@@ -315,11 +336,15 @@ class WorkflowDesignerRuntime:
                 "error": f"run {run_id!r} is {state.get('status')!r}, "
                          "not failed — nothing to retry",
             }
+        name = state.get("name")
+        if not isinstance(name, str) or not name:
+            return {"ok": False,
+                    "error": f"run {run_id!r} record is corrupt: missing 'name'"}
         try:
-            plan = build_run_plan(self._store().load(state["name"]))
+            plan = build_run_plan(self._store().load(name))
             state = retry_failed(plan, state, spawn=_subagent_spawn(self.ctx),
                                  on_step=self._runs().save, deliver=_deliver)
-        except (StepError, ValueError, FileNotFoundError) as exc:
+        except (StepError, ValueError, TypeError, FileNotFoundError, OSError, KeyError) as exc:
             return {"ok": False, "error": str(exc)}
         return self._result(state)
 
@@ -339,14 +364,21 @@ class WorkflowDesignerRuntime:
         except (FileNotFoundError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
         pending = state.get("pending") or {}
+        if not isinstance(pending, dict):
+            return {"ok": False,
+                    "error": f"run {run_id!r} record is corrupt: pending is not an object"}
         if pending.get("node_id") != node_id:
             return {"ok": False,
                     "error": f"run {run_id!r} is not waiting on {node_id!r}"}
+        name = state.get("name")
+        if not isinstance(name, str) or not name:
+            return {"ok": False,
+                    "error": f"run {run_id!r} record is corrupt: missing 'name'"}
         try:
-            plan = build_run_plan(self._store().load(state["name"]))
+            plan = build_run_plan(self._store().load(name))
             state = resume_plan(plan, state, answer, spawn=_subagent_spawn(self.ctx),
                                 on_step=self._runs().save, deliver=_deliver)
-        except (StepError, ValueError, FileNotFoundError) as exc:
+        except (StepError, ValueError, TypeError, FileNotFoundError, OSError, KeyError) as exc:
             return {"ok": False, "error": str(exc)}
         return self._result(state)
 

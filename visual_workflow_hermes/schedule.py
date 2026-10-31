@@ -71,12 +71,10 @@ def _valid_field(raw: str, low: int, high: int) -> bool:
         part = part.strip()
         if not part:
             return False
-        step = 1
         if "/" in part:
             part, _, step_text = part.partition("/")
             if not step_text.isdigit() or int(step_text) < 1:
                 return False
-            step = int(step_text)
         if part == "*":
             continue
         if "-" in part:
@@ -90,8 +88,6 @@ def _valid_field(raw: str, low: int, high: int) -> bool:
         if not part.isdigit():
             return False
         if not low <= int(part) <= high:
-            return False
-        if step != 1 and int(part) > high:
             return False
     return True
 
@@ -128,6 +124,7 @@ def describe_cron(expression: str) -> str:
     if dow == "1-5":
         return f"Weekdays at {at}"
     days = {str((i + 1) % 7): name.title() for i, name in enumerate(WEEKDAYS)}
+    days["7"] = days["0"]  # cron accepts both 0 and 7 for Sunday
     if dow in days:
         return f"Every {days[dow]} at {at}"
     return f"Cron {text}"
@@ -212,7 +209,10 @@ def schedule_design(designer: dict, *, cron: str = "", deliver: str = "origin") 
     """
     from .triggers import schedule_plan
 
-    name = designer.get("name", "")
+    # Strip once and use the stripped name everywhere: job_name/design_of_job strip, so a
+    # padded name would otherwise never match its existing job and would create a duplicate.
+    name = str(designer.get("name") or "").strip()
+    designer = {**designer, "name": name}
     expression = (cron or "").strip()
     if expression:
         problem = validate_cron(expression)

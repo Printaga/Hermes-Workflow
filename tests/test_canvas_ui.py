@@ -55,6 +55,19 @@ def test_validation_problems_reach_the_banner(canvas):
     assert "Validate failed" in source, f"{name} swallows a validate failure"
 
 
+def test_a_cron_step_has_exactly_one_slash_segment(canvas):
+    name, source = canvas
+    # "*/15/2" is not cron; accepting it saved a schedule the host would never fire.
+    assert "step.length !== 2" in source, f"{name} accepts a malformed cron step"
+
+
+def test_an_edge_key_round_trips_through_json(canvas):
+    name, source = canvas
+    # A node id may contain '>', so a delimited key could cut the wrong edge.
+    assert "JSON.stringify([from, to])" in source, f"{name} uses a colliding edge key"
+    assert "JSON.parse(selectedEdge)" in source, f"{name} cannot recover the edge pair"
+
+
 # --------------------------------------------------------------- selection layout
 def compact(text: str) -> str:
     """One rule block with every whitespace run collapsed, so the string check is about the

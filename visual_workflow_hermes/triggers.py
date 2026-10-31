@@ -12,6 +12,8 @@ agent call this plugin's own tools.
 """
 from __future__ import annotations
 
+import json
+
 TOOLSET = "visual-workflow"
 
 
@@ -37,9 +39,12 @@ def schedule_plan(designer: dict, *, deliver: str = "origin") -> dict:
     if not cron_expr:
         raise ValueError("schedule trigger needs a 'schedule' cron expression (e.g. '0 9 * * *')")
     name = designer.get("name", "workflow")
+    # A name is data, not prose: quote/escape it so a stray quote, backslash or newline can
+    # neither break the JSON example nor smuggle instructions into a fresh cron session.
+    safe_name = json.dumps(name, ensure_ascii=False)
     prompt = (
-        f"Run the saved Hermes workflow design '{name}'.\n"
-        f"1. Call workflow_design_run with {{\"name\": \"{name}\"}}.\n"
+        f"Run the saved Hermes workflow design {safe_name}.\n"
+        f"1. Call workflow_design_run with {{\"name\": {safe_name}}}.\n"
         "2. If status is 'awaiting_agent', do what pending.prompt asks, then call "
         "workflow_design_respond with run_id, node_id and your output; repeat until the run "
         "is no longer awaiting_agent.\n"

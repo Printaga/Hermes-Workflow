@@ -52,8 +52,13 @@ def list_host_profiles() -> list[dict]:
 
 
 def profile_choice(name: str, profiles: Optional[list[dict]] = None) -> Optional[dict]:
-    """The profile record for *name*, or None when the name is blank/unknown."""
-    wanted = (name or "").strip()
+    """The profile record for *name*, or None when the name is blank/unknown.
+
+    Unguarded JSON can hand us a number or an object; that is "no choice", not a crash.
+    """
+    if not isinstance(name, str):
+        return None
+    wanted = name.strip()
     if not wanted:
         return None
     for profile in profiles if profiles is not None else list_host_profiles():
@@ -67,10 +72,15 @@ def step_model(step: dict, profiles: Optional[list[dict]] = None) -> Optional[st
 
     Returns None when neither names one, which leaves the host's own default in place.
     """
-    model = (step.get("model") or "").strip() or None
+    raw_model = step.get("model")
+    model = raw_model.strip() if isinstance(raw_model, str) else None
     if model:
         return model
-    chosen = profile_choice(step.get("profile", ""), profiles)
+    raw_profile = step.get("profile")
+    if raw_profile not in (None, "") and not isinstance(raw_profile, str):
+        return None
+    chosen = profile_choice(raw_profile or "", profiles)
     if chosen:
-        return (chosen.get("model") or "").strip() or None
+        chosen_model = chosen.get("model")
+        return chosen_model.strip() if isinstance(chosen_model, str) and chosen_model.strip() else None
     return None

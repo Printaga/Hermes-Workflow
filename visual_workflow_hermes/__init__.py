@@ -2,7 +2,7 @@
 
 Registers:
   - ``/workflow`` slash command — new|list|open|save|validate|run|approve
-  - four tools (save/load/validate/run) wrapping the design store and run plan.
+  - five tools (save/load/validate/run/respond) wrapping the design store and run plan.
 
 Tools are registered against the real host contract
 ``register_tool(name, toolset, schema, handler, ...)``; ``schema`` is the OpenAI-style
@@ -120,12 +120,15 @@ _RESPOND_SCHEMA = {
             },
         },
         "required": ["run_id", "node_id"],
+        # A resume with neither field would silently store None as the step's output and
+        # advance the run; require one of them in the schema instead of trusting the caller.
+        "anyOf": [{"required": ["answer"]}, {"required": ["structured"]}],
     },
 }
 
 
 def register(ctx) -> None:
-    """Plugin entry point: one slash command plus four tools."""
+    """Plugin entry point: one slash command plus five tools."""
     from .runtime import WorkflowDesignerRuntime
 
     runtime = WorkflowDesignerRuntime(ctx)
