@@ -140,9 +140,9 @@ class WorkflowDesignerRuntime:
         for root in (Path(__file__).resolve().parent.parent, Path(sys.prefix)):
             path = root / relative
             if path.is_file():
-                return f'::preview{{file="{path}"}}'
+                return f'::preview{{file="{path.as_posix()}"}}'
         path = Path(__file__).resolve().parent.parent / relative
-        return f'::preview{{file="{path}"}}'
+        return f'::preview{{file="{path.as_posix()}"}}'
 
     def _cmd_list(self) -> str:
         names = self._store().list_designs()
