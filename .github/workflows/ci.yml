@@ -15,6 +15,7 @@ concurrency:
 jobs:
   ci:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -36,15 +37,18 @@ jobs:
           --with pytest --with fastapi --with httpx pytest -q
 
       # The two host manifest gates, at the pinned hermes-agent build, installed locked.
+      # The host checkout lives outside the plugin tree (runner.temp): validate scans
+      # the working directory recursively, and a nested hermes-agent/ would pull the
+      # host's own locales and patches into the plugin's security scan.
       - name: Check out hermes-agent (pinned)
         uses: actions/checkout@v7
         with:
           repository: NousResearch/hermes-agent
           ref: bf0203a794a07aac3ff764972ab9087baa4e4f4e
-          path: hermes-agent
+          path: ${{ runner.temp }}/hermes-agent
       - name: Install hermes-agent deps (frozen)
-        run: uv sync --project hermes-agent --frozen
+        run: uv sync --project ${{ runner.temp }}/hermes-agent --frozen
       - name: hermes plugins validate .
-        run: uv run --project hermes-agent hermes plugins validate .
+        run: uv run --project ${{ runner.temp }}/hermes-agent hermes plugins validate .
       - name: hermes plugins doctor .
-        run: uv run --project hermes-agent hermes plugins doctor .
+        run: uv run --project ${{ runner.temp }}/hermes-agent hermes plugins doctor .
