@@ -24,3 +24,6 @@ review.json
 
 # uv scratch (ephemeral check envs)
 uv.lock
+
+# CodeWiki session workspaces (generated while authoring docs/)
+docs/temp/
