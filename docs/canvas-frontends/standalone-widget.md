@@ -48,7 +48,7 @@ tooltip key in all copies.
 | --- | --- | --- |
 | Transport | `window.fetch(url, {credentials: "same-origin"})` | `ctx.rest(path, opts)` |
 | Mount | `document.getElementById("app")` on load | React ref callback into a host element |
-| Theme | Host page CSS variables | Host app tokens with fallbacks |
+| Theme | Host page CSS variables, with built-in fallbacks so a bare open still renders | Host app tokens with fallbacks |
 | Routing | None; it is one page | `/workflows` route plus sidebar row |
 | Session | Same-origin dashboard session | Host-authenticated REST door |
 

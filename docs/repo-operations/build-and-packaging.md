@@ -71,8 +71,10 @@ canvas edits (agent `schema`/`inputs`/`timeout`) are deliberately absent.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push with `contents: read` and a concurrency group that
-cancels superseded runs. A 20-minute job timeout makes a hung test or host probe fail instead of
+`.github/workflows/ci.yml` runs on every push and pull request with `contents: read` and a concurrency group that
+cancels superseded runs, on a three-OS matrix (`ubuntu-latest`, `macos-latest`,
+`windows-latest`, fail-fast off so one red OS never hides the other two).
+A 20-minute job timeout makes a hung test or host probe fail instead of
 holding a runner.
 
 Steps:
@@ -81,11 +83,13 @@ Steps:
 2. the full suite in an ephemeral environment that includes the optional route dependencies:
    `uv run --no-project --python 3.12 --with pytest --with fastapi --with httpx pytest -q`.
    Without fastapi/httpx the route tests skip silently, so CI provisions them deliberately;
-3. checkout the pinned `hermes-agent` build at a fixed commit;
-4. `uv sync --project hermes-agent --frozen` — locked host dependencies;
-5. `hermes plugins validate .` — manifest, declarations, security scan, desktop surface;
-6. `hermes plugins doctor .` — the real runtime contracts: discovery, parsing, import,
-   registration, tool count.
+3. snapshot the plugin tree aside — `validate` scans its target recursively, so the host
+   checkout below must not land inside the scanned directory;
+4. checkout the pinned `hermes-agent` build at a fixed commit into the snapshot's sibling;
+5. `uv sync --project host --frozen` — locked host dependencies;
+6. `hermes plugins validate <snapshot> --install-deps` — manifest, declarations, security scan, desktop surface;
+7. `hermes plugins doctor <snapshot>` — the real runtime contracts: discovery, parsing,
+   import, registration, tool count.
 
 The host gates are the reason a stale "four tools" docstring or a renamed tool cannot merge: the
 validator compares declarations with registrations.
