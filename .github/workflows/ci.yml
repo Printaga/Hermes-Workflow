@@ -12,6 +12,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# One shell everywhere: cp/mv and $RUNNER_TEMP behave the same on all three OSes.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   ci:
     strategy:
@@ -24,7 +29,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Pinned uv with the dependency cache enabled: the same interpreter the steps below use.
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -36,19 +40,21 @@ jobs:
           uv run --no-project --python 3.12
           --with pytest --with fastapi --with httpx pytest -q
 
+      # Snapshot the pure plugin tree first: validate scans its target recursively,
+      # so the host checkout below must not land inside the scanned directory.
+      - name: Snapshot plugin tree
+        run: cp -r . "$RUNNER_TEMP/plugin"
+
       # The two host manifest gates, at the pinned hermes-agent build, installed locked.
-      # The host checkout lives outside the plugin tree (runner.temp): validate scans
-      # the working directory recursively, and a nested hermes-agent/ would pull the
-      # host's own locales and patches into the plugin's security scan.
       - name: Check out hermes-agent (pinned)
         uses: actions/checkout@v7
         with:
           repository: NousResearch/hermes-agent
           ref: bf0203a794a07aac3ff764972ab9087baa4e4f4e
-          path: ${{ runner.temp }}/hermes-agent
+          path: host
       - name: Install hermes-agent deps (frozen)
-        run: uv sync --project ${{ runner.temp }}/hermes-agent --frozen
+        run: uv sync --project host --frozen
       - name: hermes plugins validate .
-        run: uv run --project ${{ runner.temp }}/hermes-agent hermes plugins validate .
+        run: uv run --project host hermes plugins validate "$RUNNER_TEMP/plugin" --install-deps
       - name: hermes plugins doctor .
-        run: uv run --project ${{ runner.temp }}/hermes-agent hermes plugins doctor .
+        run: uv run --project host hermes plugins doctor "$RUNNER_TEMP/plugin"
