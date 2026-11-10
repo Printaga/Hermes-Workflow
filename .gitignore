@@ -15,3 +15,9 @@ build/
 
 # CodeWiki session workspaces (generated while authoring docs/)
 .codewiki/
+
+# Review output (generated audit artifact)
+review.json
+
+# Cloud attachments / local scratch
+.cloud-attachments/
