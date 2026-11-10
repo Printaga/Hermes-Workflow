@@ -17,7 +17,7 @@ host's manifest gates are what make a broken registration fail before a user see
 | Field | Value |
 | --- | --- |
 | `name` | `visual-workflow` |
-| `version` | `0.1.0` |
+| `version` | `1.0.0` |
 | `kind` | `standalone` |
 | `requires_hermes` | `>=0.21` |
 | `provides_tools` | the five `workflow_design_*` names |

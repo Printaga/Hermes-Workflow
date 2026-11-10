@@ -1,5 +1,7 @@
 # visual-workflow — a visual agent-workflow designer for Hermes
 
+Home: [pluginsforhermes.com](https://pluginsforhermes.com/)
+
 Design an agent workflow on a canvas — Trigger, Agent, Condition, Approval, Output — then save
 it and run it. The plugin owns execution: it converts the designer graph into an ordered run
 plan and walks it step by step, pausing at approval gates and at agent steps it cannot run
@@ -88,7 +90,7 @@ hermes plugins install <repo-url>
 # installs disabled by default — activate it:
 hermes plugins enable visual-workflow   # also resolves the plugin's Python deps
 
-hermes plugins list          # visual-workflow 0.1.0
+hermes plugins list          # visual-workflow 1.0.0
 hermes plugins validate .    # from the checkout: "Validation passed."
 hermes plugins doctor .      # import + registration OK, 5 tool(s), 0 hook(s)
 ```
@@ -203,6 +205,31 @@ The agent-facing tools mirror the verbs:
   the same view. Deleting a file forgets the run; there is no pruning job.
 * **Delivery is best-effort.** A failed send is recorded in `deliveries` with `ok: false` and a
   `detail`, and the run still finishes — check `deliveries` rather than assuming a message went out.
+
+## Disclosures
+
+What the plugin touches, for the catalog record:
+
+- Network: none directly. Agent steps and message sends go through host-owned
+  seams (subagent lifecycle, plugin LLM facade, host send); the plugin opens no
+  sockets and calls no third-party service. No telemetry.
+- Reads and writes: designs under `~/.hermes/workflow-designs/`, run state
+  under `~/.hermes/workflow-runs/`. Run history is plain JSON files; deleting
+  a file forgets the run. The plugin never writes outside those two directories
+  (plus the host-owned cron jobs it is asked to create).
+- Processes: nothing runs on a timer and there are no background threads.
+  Recurring runs are real Hermes cron jobs created only on the user's say-so;
+  a cron run opens a fresh session and answers its own agent steps, never a
+  human approval gate.
+- Credentials: none. The plugin declares no `requires_env`, holds no secrets,
+  and reads no credential files.
+- Tested on Linux, macOS and Windows: the CI matrix
+  (`.github/workflows/ci.yml`) runs the full suite plus both host manifest
+  gates on all three on every push and pull request.
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE). Release history: [changelog.md](changelog.md).
 
 ## OpenBot parity notes
 
