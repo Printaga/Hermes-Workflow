@@ -21,3 +21,6 @@ review.json
 
 # Cloud attachments / local scratch
 .cloud-attachments/
+
+# uv scratch (ephemeral check envs)
+uv.lock
