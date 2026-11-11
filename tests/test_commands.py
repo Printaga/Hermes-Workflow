@@ -27,12 +27,16 @@ class FakeCtx:
     def __init__(self):
         self.commands = {}
         self.tools = {}
+        self.hooks = {}
 
     def register_command(self, name, handler, description="", args_hint="", argument_mode=None):
         self.commands[name] = {"handler": handler, "description": description}
 
     def register_tool(self, name, toolset, schema, handler, **kwargs):
         self.tools[name] = {"toolset": toolset, "schema": schema, "handler": handler, **kwargs}
+
+    def register_hook(self, hook_name, callback):
+        self.hooks[hook_name] = callback
 
 
 @pytest.fixture()

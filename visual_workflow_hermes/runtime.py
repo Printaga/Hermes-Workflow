@@ -250,7 +250,8 @@ class WorkflowDesignerRuntime:
 
     def _cmd_approve(self, run_id: str, gate: str, answer: str) -> str:
         return self._describe(
-            self.tool_respond({"run_id": run_id, "node_id": gate, "answer": answer.strip()})
+            self._respond_impl({"run_id": run_id, "node_id": gate, "answer": answer.strip()},
+                               allow_approval=True)
         )
 
     # -- tools --------------------------------------------------------------
@@ -292,6 +293,7 @@ class WorkflowDesignerRuntime:
         if retry_id:
             return self._tool_run_retry(retry_id)
         from .convert import build_run_plan
+        from .delivery import delivering_targets
         from .runner import StepError, new_state, run_plan
         from .schema import validate_designer_graph
 
@@ -303,12 +305,17 @@ class WorkflowDesignerRuntime:
         errors = validate_designer_graph(designer)
         if errors:
             return {"ok": False, "errors": errors}
+        # A human slash command and a hook-approved model call both land here: record
+        # the delivery set this run starts with, so a later resume can tell whether
+        # the design was edited to send somewhere new in the meantime (D1).
+        approved = delivering_targets(designer)
         # The tool contract is a plain dict, never a raise into the dispatcher: plan
         # building, the first save, and a corrupt-state KeyError all stay here.
         try:
             plan = build_run_plan(designer)
             run_id = uuid.uuid4().hex[:12]
             state = new_state(plan, run_id)
+            state["approved_targets"] = approved
             runs = self._runs()
             runs.save(state)
             state = run_plan(plan, state, spawn=_subagent_spawn(self.ctx),
@@ -324,6 +331,7 @@ class WorkflowDesignerRuntime:
         result the dispatcher can print, never a raise into the tool dispatcher.
         """
         from .convert import build_run_plan
+        from .delivery import delivering_targets
         from .runner import StepError, retry_failed, retryable
 
         try:
@@ -341,7 +349,11 @@ class WorkflowDesignerRuntime:
             return {"ok": False,
                     "error": f"run {run_id!r} record is corrupt: missing 'name'"}
         try:
-            plan = build_run_plan(self._store().load(name))
+            designer = self._store().load(name)
+            plan = build_run_plan(designer)
+            # The retry tool call went through the same hook as a fresh run, so the
+            # current delivery set is approved as of now; stamp it for later resumes.
+            state["approved_targets"] = delivering_targets(designer)
             state = retry_failed(plan, state, spawn=_subagent_spawn(self.ctx),
                                  on_step=self._runs().save, deliver=_deliver)
         except (StepError, ValueError, TypeError, FileNotFoundError, OSError, KeyError) as exc:
@@ -349,8 +361,18 @@ class WorkflowDesignerRuntime:
         return self._result(state)
 
     def tool_respond(self, args, **_) -> dict:
-        """Resume a paused run with an approval answer or a pending agent output."""
+        """Resume a paused run with a pending agent step's output.
+
+        Approval gates are human-only and refused here: answering one needs
+        ``/workflow approve`` or the canvas approve control, so a model call naming
+        a pending approval node gets a refusal telling it to ask the user instead.
+        """
+        return self._respond_impl(args, allow_approval=False)
+
+    def _respond_impl(self, args, *, allow_approval: bool) -> dict:
+        """Shared resume: the tool path denies approval gates, human paths allow them."""
         from .convert import build_run_plan
+        from .delivery import delivering_targets
         from .runner import StepError, resume_plan
 
         run_id = args.get("run_id") or ""
@@ -375,7 +397,51 @@ class WorkflowDesignerRuntime:
             return {"ok": False,
                     "error": f"run {run_id!r} record is corrupt: missing 'name'"}
         try:
-            plan = build_run_plan(self._store().load(name))
+            designer = self._store().load(name)
+            plan = build_run_plan(designer)
+            current = {(d.get("node"), d.get("target")) for d in delivering_targets(designer)}
+            approved = {(d.get("node"), d.get("target"))
+                        for d in (state.get("approved_targets") or []) if isinstance(d, dict)}
+            if allow_approval:
+                # A person just touched this run: refresh the stamp and proceed.
+                state["approved_targets"] = delivering_targets(designer)
+            else:
+                if current - approved:
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"run {run_id!r} would now send somewhere it was not approved "
+                            f"to send to ({sorted(t for _, t in current - approved)}); the "
+                            "design's delivery targets changed since this run started. Ask "
+                            "the user to approve a fresh run with workflow_design_run, or "
+                            "resume this one from the canvas."
+                        ),
+                    }
+                if state.get("status") == "awaiting_approval":
+                    # Record-based, not plan-based: renaming the gate node in the design
+                    # cannot turn a parked human gate into something the model may answer.
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"run {run_id!r} is waiting on approval gate "
+                            f"{pending.get('node_id')!r}, which only a person can answer — "
+                            "ask the user to run "
+                            f"/workflow approve {run_id} {pending.get('node_id')} <answer> "
+                            "(or answer it in the canvas). The model cannot answer "
+                            "approval gates."
+                        ),
+                    }
+                paused = next((s for s in plan.get("steps", []) if s.get("id") == node_id), None)
+                if isinstance(paused, dict) and paused.get("kind") == "approval":
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"run {run_id!r} is waiting on approval gate {node_id!r}, which only "
+                            "a person can answer — ask the user to run "
+                            f"/workflow approve {run_id} {node_id} <answer> (or answer it in "
+                            "the canvas). The model cannot answer approval gates."
+                        ),
+                    }
             state = resume_plan(plan, state, answer, spawn=_subagent_spawn(self.ctx),
                                 on_step=self._runs().save, deliver=_deliver)
         except (StepError, ValueError, TypeError, FileNotFoundError, OSError, KeyError) as exc:

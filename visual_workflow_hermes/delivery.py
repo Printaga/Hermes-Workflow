@@ -74,6 +74,31 @@ def send_text(target: str, text: str) -> dict:
     return {"target": target, "ok": False, "detail": str(detail or "send failed")}
 
 
+def delivering_targets(graph: dict) -> list:
+    """Output steps of *graph* that would actually attempt a send, in graph order.
+
+    Each item is ``{"node": id, "target": target}``. Mirrors :func:`deliver_output`'s
+    own rules exactly: a send is attempted if and only if the mode is known, a target
+    is set, and a ``channel`` target carries ``<platform>:<chat id>``. The hook and
+    the run-resume guard both key off this one definition so they cannot drift.
+    """
+    found = []
+    for node in (graph.get("nodes", []) if isinstance(graph, dict) else []) or []:
+        if not isinstance(node, dict) or node.get("type") != "output":
+            continue
+        mode = str(node.get("deliver") or "").strip().lower()
+        if mode not in MODES:
+            continue
+        target = node.get("target")
+        text = target.strip() if isinstance(target, str) else ""
+        if not text:
+            continue
+        if mode == "channel" and ":" not in text:
+            continue
+        found.append({"node": node.get("id"), "target": text})
+    return found
+
+
 def deliver_output(step: dict, payload, run_name: str = "") -> dict:
     """Deliver one output node's payload. Returns ``{target, ok, detail}``; never raises.
 

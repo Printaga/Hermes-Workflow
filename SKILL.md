@@ -34,7 +34,9 @@ from an output port to another node to add an edge, click an edge and press Dele
 * `output` collects its parents' outputs; optional `deliver` (`notification` for a platform's
   home channel, `channel` for a specific chat) plus a `target` (`telegram`, `telegram:123456`,
   `slack:#ops`). Leave both off to only collect. Never claim a delivery happened — read
-  `deliveries` in the run result.
+  `deliveries` in the run result. Starting a run of a design with a delivering Output
+  node through `workflow_design_run` raises a Hermes approval prompt naming the target;
+  never approve it yourself — the human in the loop approves or denies each run.
 
 Edges are `after: [<parent-id>...]`; a node runs after all parents. `x`/`y` are widget-only.
 
@@ -64,8 +66,10 @@ start; do not invent field names from memory.
 
 * `done` — inspect `outputs`; `skipped` lists nodes gated off by a false condition;
   `deliveries` lists each output's send attempt (`node_id`, `target`, `ok`, `detail`).
-* `awaiting_approval` — ask the user `pending.question` (options in `pending.options`), then
-  `workflow_design_respond` with `run_id`, `node_id` and the chosen `answer`.
+* `awaiting_approval` — ask the user `pending.question` (options in `pending.options`),
+  then ask *them* to run `/workflow approve <run_id> <node_id> <answer>` (or click it
+  in a canvas) — `workflow_design_respond` refuses approval gates, so the model can
+  never answer for the person.
 * `awaiting_agent` — perform `pending.prompt` yourself, then respond with the output as
   `answer` (or `structured` for a JSON object conditions can read).
 * `failed` — report `error`; do not retry blindly. A gate that expired says

@@ -85,8 +85,9 @@ _RUN_SCHEMA = {
     "name": "workflow_design_run",
     "description": (
         "Run a saved workflow design now. Executes steps sequentially and returns the run status: "
-        "'done' with outputs, 'awaiting_approval' (answer with workflow_design_respond), or "
-        "'awaiting_agent' (perform pending.prompt, then respond with the output)."
+        "'done' with outputs, 'awaiting_approval' (answer via /workflow approve or the canvas — "
+        "never via workflow_design_respond), or 'awaiting_agent' (perform pending.prompt, then "
+        "respond with the output)."
     ),
     "parameters": {
         "type": "object",
@@ -101,9 +102,10 @@ _RUN_SCHEMA = {
 _RESPOND_SCHEMA = {
     "name": "workflow_design_respond",
     "description": (
-        "Resume a paused workflow run. For 'awaiting_approval' pass the chosen option as answer; "
-        "for 'awaiting_agent' pass the step's output as answer (or structured, which downstream "
-        "conditions can read). Returns the next run status."
+        "Resume a paused workflow run that is waiting on an agent step: pass the step's "
+        "output as answer (or structured, which downstream conditions can read). "
+        "Approval gates are refused here — they need /workflow approve or the canvas. "
+        "Returns the next run status."
     ),
     "parameters": {
         "type": "object",
@@ -129,9 +131,14 @@ _RESPOND_SCHEMA = {
 
 def register(ctx) -> None:
     """Plugin entry point: one slash command plus five tools."""
+    from .hooks import on_pre_tool_call
     from .runtime import WorkflowDesignerRuntime
 
     runtime = WorkflowDesignerRuntime(ctx)
+
+    # Human-in-the-loop for model-initiated sends: a run the model starts whose
+    # design delivers to a chat first goes through Hermes' approval prompt.
+    ctx.register_hook("pre_tool_call", on_pre_tool_call)
 
     ctx.register_command(
         name="workflow",

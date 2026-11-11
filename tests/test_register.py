@@ -19,6 +19,7 @@ class FakeCtx:
     def __init__(self):
         self.commands = {}
         self.tools = {}
+        self.hooks = {}
 
     def register_command(self, name, handler, description="", args_hint="", argument_mode=None):
         self.commands[name] = {"handler": handler, "description": description}
@@ -27,7 +28,7 @@ class FakeCtx:
         self.tools[name] = {"toolset": toolset, "schema": schema, "handler": handler, **kwargs}
 
     def register_hook(self, hook_name, callback):
-        raise AssertionError("this plugin registers no hooks")
+        self.hooks[hook_name] = callback
 
 
 def _registered():
@@ -73,6 +74,11 @@ def test_help_lists_every_verb():
     out = ctx.commands["workflow"]["handler"]("")
     for verb in ("new", "list", "open", "save", "validate", "run", "approve"):
         assert verb in out
+
+
+def test_register_exposes_the_delivery_approval_hook():
+    ctx = _registered()
+    assert callable(ctx.hooks.get("pre_tool_call"))
 
 
 def test_unknown_verb_returns_the_usage_text():

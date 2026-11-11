@@ -30,7 +30,7 @@ from fastapi import APIRouter, Body, HTTPException  # noqa: E402
 
 from visual_workflow_hermes.channels import list_host_channels  # noqa: E402
 from visual_workflow_hermes.convert import build_run_plan  # noqa: E402
-from visual_workflow_hermes.delivery import deliver_output  # noqa: E402
+from visual_workflow_hermes.delivery import deliver_output, delivering_targets  # noqa: E402
 from visual_workflow_hermes.models import clear_cache as clear_model_cache, list_host_models  # noqa: E402
 from visual_workflow_hermes.profiles import list_host_profiles  # noqa: E402
 from visual_workflow_hermes.runner import (  # noqa: E402
@@ -294,6 +294,9 @@ def run_design(name: str) -> dict:
     run_id = uuid.uuid4().hex[:12]
     runs = _runs()
     state = new_state(plan, run_id)
+    # A person pressed Run: record the delivery set so a later model resume can
+    # tell whether the design was edited to send somewhere new in the meantime.
+    state["approved_targets"] = delivering_targets(designer)
     runs.save(state)
     state = run_plan(plan, state, spawn=llm_spawn(), on_step=runs.save, deliver=deliver_output)
     return _result(state)
@@ -427,7 +430,9 @@ def respond_run(run_id: str, payload: dict = Body(...)) -> dict:
         )
     spawn = llm_spawn()
     try:
-        plan = build_run_plan(_load_design(state["name"]))
+        designer = _load_design(state["name"])
+        plan = build_run_plan(designer)
+        state["approved_targets"] = delivering_targets(designer)
         if payload.get("agent_generate") and answer is None:
             made = _agent_step_output(plan, state, node_id, spawn)
             # A structuring schema gives conditions fields to read; plain text otherwise.
@@ -457,7 +462,9 @@ def retry_run(run_id: str) -> dict:
                     "— nothing to retry"),
         )
     try:
-        plan = build_run_plan(_load_design(state["name"]))
+        designer = _load_design(state["name"])
+        plan = build_run_plan(designer)
+        state["approved_targets"] = delivering_targets(designer)
         state = retry_failed(plan, state, spawn=llm_spawn(), on_step=runs.save,
                              deliver=deliver_output)
     except (StepError, ValueError, FileNotFoundError) as exc:

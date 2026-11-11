@@ -92,7 +92,7 @@ hermes plugins enable visual-workflow   # also resolves the plugin's Python deps
 
 hermes plugins list          # visual-workflow 1.0.0
 hermes plugins validate .    # from the checkout: "Validation passed."
-hermes plugins doctor .      # import + registration OK, 5 tool(s), 0 hook(s)
+hermes plugins doctor .      # import + registration OK, 5 tool(s), 1 hook(s)
 ```
 
 A `file://` or `http://` install source prints a "custom (unreviewed) source" warning;

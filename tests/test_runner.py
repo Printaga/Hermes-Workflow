@@ -474,9 +474,12 @@ def test_runtime_run_pauses_for_agent_then_approval_and_persists(tmp_path):
     reloaded = rt._runs().load(first["run_id"])
     assert reloaded["pending"]["node_id"] == "human"
 
+    # The model cannot answer the gate itself — it must ask for /workflow approve.
     third = rt.tool_respond({"run_id": first["run_id"], "node_id": "human", "answer": "ship"})
-    assert third["status"] == "done"
-    assert third["outputs"]["out"] == {"human": "ship"}
+    assert third["ok"] is False and "/workflow approve" in third["error"]
+    # ...which the human path then completes.
+    done = rt.handle_command(f"approve {first['run_id']} human ship")
+    assert done is not None and "done" in done and "out" in done
 
 
 def test_runtime_prunes_downstream_and_surfaces_skipped(tmp_path):
@@ -497,6 +500,107 @@ def test_runtime_respond_rejects_a_node_that_is_not_pending(tmp_path):
     bad = rt.tool_respond({"run_id": run_id, "node_id": "out", "answer": "x"})
     assert bad["ok"] is False
     assert "not waiting on" in bad["error"]
+
+
+def _save_collect_only_agent_design(rt, name="quiet"):
+    return rt.tool_save({"name": name, "graph": {"name": name, "nodes": [
+        {"id": "trigger1", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "writer", "type": "agent", "prompt": "Write a haiku.", "after": ["trigger1"]},
+        {"id": "out", "type": "output", "after": ["writer"]},
+    ]}})
+
+
+def _delivering_graph(name, target="telegram:123"):
+    return {"name": name, "nodes": [
+        {"id": "trigger1", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "writer", "type": "agent", "prompt": "Write a haiku.", "after": ["trigger1"]},
+        {"id": "out", "type": "output", "after": ["writer"],
+         "deliver": "channel", "target": target},
+    ]}
+
+
+def test_tool_resume_refuses_a_delivery_added_after_run_start(tmp_path, monkeypatch):
+    """D1: a collect-only run re-saved with a delivering output must not send on resume."""
+    import visual_workflow_hermes.runtime as runtime_mod
+
+    deliveries = []
+    monkeypatch.setattr(runtime_mod, "_deliver",
+                        lambda step, payload, run_name="": deliveries.append(step) or
+                        {"target": "x", "ok": True, "detail": "sent"})
+    rt = _runtime(tmp_path)
+    assert _save_collect_only_agent_design(rt)["ok"] is True
+    run_id = rt.tool_run({"name": "quiet"})["run_id"]
+    # The run parks at awaiting_agent (no agent backend in tests); the design is then
+    # edited to add a delivering output, and the model tries to resume it.
+    assert rt.tool_save({"name": "quiet", "graph": _delivering_graph("quiet")})["ok"] is True
+    refused = rt.tool_respond({"run_id": run_id, "node_id": "writer", "answer": "haiku"})
+    assert refused["ok"] is False
+    assert "not approved" in refused["error"]
+    assert deliveries == [], "no send may happen on an unapproved resume"
+    assert rt._runs().load(run_id)["status"] == "awaiting_agent"
+
+
+def test_tool_resume_sends_when_nothing_changed(tmp_path, monkeypatch):
+    """The approved path still works: identical delivery set resumes and delivers."""
+    import visual_workflow_hermes.runtime as runtime_mod
+
+    deliveries = []
+    monkeypatch.setattr(runtime_mod, "_deliver",
+                        lambda step, payload, run_name="": deliveries.append(step) or
+                        {"target": "x", "ok": True, "detail": "sent"})
+    rt = _runtime(tmp_path)
+    assert rt.tool_save({"name": "loud", "graph": _delivering_graph("loud")})["ok"] is True
+    run_id = rt.tool_run({"name": "loud"})["run_id"]
+    done = rt.tool_respond({"run_id": run_id, "node_id": "writer", "answer": "haiku"})
+    assert done["status"] == "done"
+    assert [d["id"] for d in deliveries] == ["out"]
+
+
+def test_tool_respond_refuses_a_renamed_approval_gate(tmp_path):
+    """D2: the refusal keys off the run record, not the plan — renaming the gate
+    node to an agent node in the design cannot let the model answer it."""
+    rt = _runtime(tmp_path)
+    assert _save_approval_design(rt)["ok"] is True
+    first = rt.tool_run({"name": "demo"})
+    second = rt.tool_respond({"run_id": first["run_id"], "node_id": "draft",
+                              "answer": {"word_count": 42}})
+    assert second["status"] == "awaiting_approval"
+    # The design is edited so the parked gate now looks like an agent step.
+    graph = rt.tool_load({"name": "demo"})["graph"]
+    for node in graph["nodes"]:
+        if node.get("id") == "human":
+            node["type"] = "agent"
+            node["prompt"] = "Approve this."
+            node.pop("question", None)
+            node.pop("options", None)
+    assert rt.tool_save({"name": "demo", "graph": graph})["ok"] is True
+    refused = rt.tool_respond({"run_id": first["run_id"], "node_id": "human",
+                               "answer": "ship"})
+    assert refused["ok"] is False and "/workflow approve" in refused["error"]
+    assert rt._runs().load(first["run_id"])["status"] == "awaiting_approval"
+
+
+def test_human_approve_still_answers_gates_after_a_design_edit(tmp_path):
+    """The human path is not gated by the plan: /workflow approve answers even a
+    renamed gate, because a person — not the design — is the authority."""
+    rt = _runtime(tmp_path)
+    assert _save_approval_design(rt)["ok"] is True
+    run_id = rt.tool_run({"name": "demo"})["run_id"]
+    answered = rt.tool_respond({"run_id": run_id, "node_id": "draft",
+                                "answer": {"word_count": 42}})
+    assert answered["status"] == "awaiting_approval"
+    graph = rt.tool_load({"name": "demo"})["graph"]
+    for node in graph["nodes"]:
+        if node.get("id") == "human":
+            node["type"] = "agent"
+            node["prompt"] = "Approve this."
+            node.pop("question", None)
+            node.pop("options", None)
+    assert rt.tool_save({"name": "demo", "graph": graph})["ok"] is True
+    # resume_plan resolves the parked answer against the run record, so the human
+    # answer still lands even though the design no longer calls it an approval.
+    done = rt.handle_command(f"approve {run_id} human ship")
+    assert done is not None and "done" in done
 
 
 # -- retrying a failed run from chat (plan item C's chat surface) -------------

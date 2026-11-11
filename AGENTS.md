@@ -19,7 +19,8 @@ agent-level only and stays out of those docs' way.
 
 - `visual_workflow_hermes/` — the plugin package: `schema` (validator), `store` (designs/runs on
   disk), `convert` (graph → run plan), `runner` (sequential executor), `spawn` (agent-step backends),
-  `profiles`/`models` (host catalogs for the pickers), `runtime` (tool verbs), plus `delivery`,
+  `profiles`/`models` (host catalogs for the pickers), `runtime` (tool verbs), `hooks`
+  (pre_tool_call delivery gate), plus `delivery`,
   `schedule`, `channels`, and tool registration in `__init__.py`.
 - `dashboard/plugin_api.py` — FastAPI router mounted by the Hermes dashboard server at
   `/api/plugins/visual-workflow`; the served copy of this repo is what responds.
