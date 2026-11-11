@@ -1465,8 +1465,9 @@ function createDesigner(host, call) {
   function conditionBuilder(current) {
     var box = document.createElement("div");
     var upstream = (current.after || []).filter(function (id) { return !!id; });
+    var hasText = !!(current.expression && current.expression.trim());
     var parsed = parseCondition(current.expression, upstream);
-    if (!parsed || condRaw[current.id] || !upstream.length) {
+    if (condRaw[current.id] || !upstream.length || (hasText && !parsed)) {
       var area = textArea(current.expression || "", function (v) {
         current.expression = v;
         draw();
@@ -1486,6 +1487,7 @@ function createDesigner(host, call) {
       }
       return box;
     }
+    if (!parsed) parsed = { node: upstream[0], field: "", op: ">", value: "" };
     var parts = { node: parsed.node, field: parsed.field, op: parsed.op, value: parsed.value };
     function commit() {
       current.expression = buildExpression(parts.node, parts.field, parts.op, parts.value);
