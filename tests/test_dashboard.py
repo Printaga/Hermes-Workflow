@@ -42,9 +42,11 @@ REQUIRED_ROUTES = {
     ("/runs", "get"),
     ("/runs/{run_id}", "get"),
     # Deletion, human paths only (no model-callable delete tool): one saved design
-    # (refused while a schedule replays it) and one stored run.
+    # (refused while a schedule replays it); one stored run.
     ("/designs/{name}", "delete"),
     ("/runs/{run_id}", "delete"),
+    # Condition builder: field paths seen in recent done runs of one design.
+    ("/designs/{name}/fields", "get"),
     # "New from template": the built-in designs shipped in examples/.
     ("/designs/templates", "get"),
     # Schedules view: the delivery-target picker and the cron jobs this plugin created.
@@ -257,6 +259,25 @@ def test_delete_run_roundtrip_and_unknown_is_404(tmp_path, monkeypatch):
     assert body == {"ok": True, "run_id": run_id}
     assert client.delete(f"/api/plugins/visual-workflow/runs/{run_id}").status_code == 404
     assert client.delete("/api/plugins/visual-workflow/runs/nope!").status_code == 400
+
+
+def test_design_fields_lists_paths_seen_in_done_runs(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path, monkeypatch)
+    _save_gate_design(client, name="scored")
+    run = client.post("/api/plugins/visual-workflow/designs/scored/run").json()
+    assert run["status"] == "awaiting_approval"  # parked at the gate, counted below
+    body = client.get("/api/plugins/visual-workflow/designs/scored/fields").json()
+    assert body["design"] == "scored" and body["source"] == "previous runs"
+    assert body["fields"] == []  # parked, not done: suggests nothing yet
+    from visual_workflow_hermes.store import RunStore
+
+    RunStore(root=tmp_path / "workflow-runs").save({
+        "run_id": "aaaaaaaaaaaa", "name": "scored", "status": "done",
+        "outputs": {"writer": {"text": "hi", "score": 9}, "gate": "ship"},
+    })
+    seen = client.get("/api/plugins/visual-workflow/designs/scored/fields").json()["fields"]
+    refs = {(f["node"], f["path"]) for f in seen}
+    assert ("writer", "") in refs and ("writer", "score") in refs and ("gate", "") in refs
 
 
 def test_profiles_endpoint_answers_even_without_a_host_registry(tmp_path, monkeypatch):

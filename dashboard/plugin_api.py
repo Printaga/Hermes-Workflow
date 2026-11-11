@@ -230,6 +230,17 @@ def delete_design(name: str) -> dict:
     return {"ok": True, "name": name}
 
 
+@router.get("/designs/{name}/fields")
+def design_fields(name: str) -> dict:
+    """Field paths seen in recent *done* runs of this design, for the condition builder.
+
+    Read-only discovery: ``[{node, path}]`` where ``path`` is ``""`` for the whole
+    output. A new design with no runs yields an empty list — the canvas then says
+    so and points at the whole-output fallback instead of offering nothing.
+    """
+    return {"design": name, "fields": _runs().field_paths(name), "source": "previous runs"}
+
+
 @router.post("/designs/{name}")
 def save_design(name: str, payload: dict = Body(...)) -> dict:
     """Validate and store a designer graph under ``name``.

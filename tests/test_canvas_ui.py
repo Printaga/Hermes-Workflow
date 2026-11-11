@@ -354,7 +354,21 @@ def test_condition_builder_guides_steps_operators_and_preview(canvas):
     assert "Continue when " in source, f"{name} preview is not plain English"
     assert "advanced: edit as text" in source, f"{name} has no raw-text escape hatch"
     assert "conditionBuilder(" in source, f"{name} never opens the builder"
-    # Every exit from the builder must hand back its box: a bare `return` renders
-    # nothing and crashes appendChild on the caller (verified live, once).
-    assert "return;" not in body_of(source, "conditionBuilder"), (
-        f"{name} builder can return without its box")
+    # Autocomplete from previous runs: whole-output options always, harvested field
+    # paths when this design has done runs, an honest empty-state otherwise.
+    assert "vw-fields-" in source, f"{name} field input has no suggestions attached"
+    assert "whole output" in source, f"{name} never offers the no-fields fallback"
+    assert "/fields" in source, f"{name} never harvests previous runs"
+    assert "from previous runs" in source, f"{name} suggestions are unlabeled"
+    assert "reply as JSON" in source, f"{name} has no empty-state guidance"
+    assert "view previous outputs" in source, f"{name} has no peek at previous outputs"
+    assert 'TIPS["runs.peek"]' in source, f"{name} never tips the peek control"
+    # Every exit from the builder must hand back its box: a bare `return` at the
+    # builder's own level renders nothing and crashes appendChild on the caller
+    # (verified live, once). Nested callbacks may return bare, so the check is
+    # exact-indent, not a substring ban.
+    defline = next(l for l in source.splitlines() if "function conditionBuilder(" in l)
+    top = len(defline) - len(defline.lstrip()) + 2
+    bad = [l.strip() for l in body_of(source, "conditionBuilder").splitlines()
+           if re.match(r"^ {" + str(top) + r"}(?=\S).*\breturn;$", l)]
+    assert not bad, f"{name} builder has an exit that drops the box: {bad}"

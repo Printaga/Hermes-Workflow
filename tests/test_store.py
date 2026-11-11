@@ -90,6 +90,41 @@ def test_delete_removes_a_stored_run(tmp_path):
         runs.delete("nope!")
 
 
+def test_field_paths_harvests_only_done_runs_of_the_design(tmp_path):
+    from visual_workflow_hermes.store import RunStore
+
+    runs = RunStore(root=tmp_path)
+    runs.save({"run_id": "aaaaaaaaaaaa", "name": "d",
+               "status": "done",
+               "outputs": {"writer": {"text": "hi", "meta": {"n": 1}}, "out": {"writer": "..."}}})
+    runs.save({"run_id": "bbbbbbbbbbbb", "name": "d",
+               "status": "failed", "outputs": {"writer": {"stale": True}}})
+    runs.save({"run_id": "cccccccccccc", "name": "other",
+               "status": "done", "outputs": {"writer": {"foreign": 1}}})
+    fields = runs.field_paths("d")
+    refs = {(f["node"], f["path"]) for f in fields}
+    assert ("writer", "") in refs  # the whole output is always offered
+    assert ("writer", "text") in refs
+    assert ("writer", "meta.n") in refs
+    assert ("writer", "stale") not in refs  # failed runs never suggest
+    assert ("writer", "foreign") not in refs  # other designs never suggest
+
+
+def test_field_paths_skips_arrays_absurd_keys_and_caps_depth(tmp_path):
+    from visual_workflow_hermes.store import RunStore
+
+    runs = RunStore(root=tmp_path)
+    runs.save({"run_id": "dddddddddddd", "name": "d", "status": "done", "outputs": {
+        "a": {"tags": ["x", "y"], "deep": {"l2": {"l3": {"l4": 1}}},
+              "x" * 50: "toolong", "": "empty", "ok": 1},
+    }})
+    refs = {(f["node"], f["path"]) for f in runs.field_paths("d")}
+    assert ("a", "") in refs and ("a", "ok") in refs and ("a", "tags") in refs
+    assert ("a", "deep.l2.l3") in refs  # depth 3 kept...
+    assert not any(p.startswith("deep.l2.l3.") for _, p in refs)  # ...deeper cut
+    assert not any(len(p) > 40 for _, p in refs if p)
+
+
 def test_list_designs_sorted(tmp_path):
     s = DesignStore(root=tmp_path)
     s.save("b-one", _graph("b"))

@@ -220,6 +220,7 @@
     "runs.resume": "Paste the agent step's result here and resume the run right where it paused.",
     "runs.agent": "Let the host agent produce this step's output now, then resume right where it paused.",
     "runs.retry": "Re-run this failed run from the step that failed; steps that already finished are kept.",
+    "runs.peek": "Show previous runs and their outputs.",
     "note.text": "What the sticky says; it is only for the person reading the canvas.",
     "note.color": "Tint for the sticky; it is a reading aid, not part of the run.",
     "schedule.save": "Create or update the real Hermes cron job that replays this saved workflow.",
@@ -681,6 +682,34 @@
       if (text) { out[id] = text; }
     });
     return out;
+  }
+
+  /** Field paths seen in previous runs of this design, for the builder's autocomplete.
+   *  Harvest is a bonus: the builder works fully without it, so failures stay silent. */
+  function fetchFieldHints(design, upstream, dl, box) {
+    if (!window.fetch) return;
+    window.fetch("/api/plugins/visual-workflow/designs/" + encodeURIComponent(design) + "/fields",
+                 { credentials: "same-origin" })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) {
+        var rows = (data && data.fields) || [];
+        if (!rows.length && dl.isConnected) {
+          var none = document.createElement("p");
+          none.className = "hint";
+          none.textContent = "Fields appear after this design's first run — tip: ask the agent to reply as JSON to get named fields.";
+          var anchor0 = box.querySelector(".vw-echo");
+          if (anchor0) { box.insertBefore(none, anchor0); } else { box.appendChild(none); }
+          return;
+        }
+        rows.forEach(function (row) {
+          if (!row || !row.path || upstream.indexOf(row.node) < 0) { return; }
+          var opt = document.createElement("option");
+          opt.value = "out." + row.node + "." + row.path;
+          opt.label = "from previous runs";
+          dl.appendChild(opt);
+        });
+      })
+      .catch(function () { /* harvest is a bonus */ });
   }
 
   /** Wrapped excerpt of one node's last output, or [] when there is nothing to show
@@ -1478,17 +1507,42 @@
     var preview = document.createElement("p");
     preview.className = "hint";
     var echo = document.createElement("p");
-    echo.className = "muted";
+    echo.className = "muted vw-echo";
     function refresh() {
       preview.textContent = describeCondition(parts.node, parts.field, parts.op, parts.value);
       echo.textContent = current.expression;
     }
     var fieldInput = textInput(parts.field, function (v) {
+      // A harvested suggestion is a full ref: split it back into the step and field
+      // it names, so picking one fills both controls.
+      var full = String(v || "").trim().match(/^out\.(.+)$/);
+      if (full) {
+        var sp = splitTarget(full[1], upstream);
+        if (sp) {
+          parts.node = sp.node;
+          nodeSel.value = sp.node;
+          parts.field = sp.field;
+          commit();
+          refresh();
+          return;
+        }
+      }
       parts.field = v.trim();
       commit();
       refresh();
     }, "field.path (optional)");
     box.appendChild(field("field", fieldInput, TIPS["condition.expression"]));
+    var dl = document.createElement("datalist");
+    dl.id = "vw-fields-" + current.id;
+    fieldInput.setAttribute("list", dl.id);
+    upstream.forEach(function (id) {
+      var whole = document.createElement("option");
+      whole.value = "out." + id;
+      whole.label = "whole output";
+      dl.appendChild(whole);
+    });
+    box.appendChild(dl);
+    fetchFieldHints(graph.name, upstream, dl, box);
     var opSel = document.createElement("select");
     opSel.title = TIPS["condition.expression"];
     COND_OPS.forEach(function (pair) {
@@ -1515,6 +1569,16 @@
     refresh();
     box.appendChild(preview);
     box.appendChild(echo);
+    var peek = document.createElement("button");
+    peek.type = "button";
+    peek.className = "pill";
+    peek.textContent = "view previous outputs";
+    peek.title = TIPS["runs.peek"];
+    peek.addEventListener("click", function () {
+      var runBox = document.getElementById("run");
+      if (runBox && runBox.scrollIntoView) { runBox.scrollIntoView(); }
+    });
+    box.appendChild(peek);
     var adv = document.createElement("button");
     adv.type = "button";
     adv.className = "pill";

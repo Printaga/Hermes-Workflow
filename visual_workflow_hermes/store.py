@@ -127,6 +127,59 @@ class RunStore:
     def list_runs(self) -> list[str]:
         return sorted(p.stem for p in self.root.glob("*.json"))
 
+    # Suggestion material for the condition builder's field autocomplete: dotted paths
+    # actually observed in stored outputs. Objects only (an array is a leaf), depth and
+    # key length capped, absurd keys dropped — suggestions, never a contract.
+    _MAX_FIELD_DEPTH = 3
+    _MAX_FIELD_KEY_LEN = 40
+    _MAX_FIELDS = 100
+
+    @classmethod
+    def _walk_paths(cls, value, depth: int = 0):
+        if isinstance(value, dict) and depth < cls._MAX_FIELD_DEPTH:
+            for key, sub in value.items():
+                if not isinstance(key, str) or not key or len(key) > cls._MAX_FIELD_KEY_LEN:
+                    continue
+                yield key
+                for rest in cls._walk_paths(sub, depth + 1):
+                    yield f"{key}.{rest}"
+
+    def field_paths(self, design: str, runs: int = 20) -> list[dict]:
+        """``[{node, path}]`` from recent *done* runs of *design*, newest first.
+
+        Only finished runs count (a failed or parked run's partial outputs would
+        suggest fields the step never reliably produces). ``path`` is ``""`` for
+        the whole output — the fallback that needs no fields at all.
+        """
+        found: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+
+        def _add(node: str, path: str) -> bool:
+            if (node, path) in seen:
+                return len(found) < self._MAX_FIELDS
+            seen.add((node, path))
+            found.append({"node": node, "path": path})
+            return len(found) < self._MAX_FIELDS
+
+        for row in self.recent(max(1, runs) * 2):
+            state = row.get("state") or {}
+            if state.get("name") != design or state.get("status") != "done":
+                continue
+            outputs = state.get("outputs")
+            if not isinstance(outputs, dict):
+                continue
+            for node_id, payload in outputs.items():
+                if not isinstance(node_id, str) or not node_id:
+                    continue
+                if not _add(node_id, ""):
+                    return found
+                for path in self._walk_paths(payload):
+                    if not _add(node_id, path):
+                        return found
+            if len(found) >= self._MAX_FIELDS:
+                break
+        return found
+
     def delete(self, run_id: str) -> None:
         path = self._path(run_id)
         try:
