@@ -187,11 +187,43 @@ def list_workflow_jobs() -> dict:
 
 
 def apply_action(action: str, job_id: str) -> dict:
-    """Pause / resume / run-now / remove one job. Returns ``{ok, job?, error?}``."""
+    """Pause / resume / run-now / remove one workflow job. Returns ``{ok, job?, error?}``.
+
+    Only jobs this plugin created (names starting with ``workflow:``) may be acted on:
+    the Schedules view lists workflow jobs exclusively, so anything else is a foreign
+    cron job the plugin must not pause, resume, trigger, or delete.
+    """
     verb = (action or "").strip().lower()
     if verb not in ("pause", "resume", "run", "remove"):
         return {"ok": False, "error": f"unknown schedule action {action!r}"}
-    reply = _cron({"action": verb, "job_id": (job_id or "").strip()})
+    target = (job_id or "").strip()
+    if not target:
+        return {"ok": False, "error": "a job id is required"}
+    listing = _cron({"action": "list"})
+    if listing is None:
+        return {"ok": False, "error": "the host scheduler is not available here"}
+    if not listing.get("success"):
+        return {"ok": False, "error": str(listing.get("error") or "the host scheduler refused it")}
+    jobs = listing.get("jobs") or []
+    if not isinstance(jobs, list):
+        return {"ok": False, "error": "the host scheduler returned a malformed job list"}
+    match = next(
+        (
+            job
+            for job in jobs
+            if isinstance(job, dict) and str(job.get("job_id") or job.get("id") or "") == target
+        ),
+        None,
+    )
+    if match is None:
+        return {"ok": False, "error": f"job {target!r} is not a workflow schedule: refusing {verb}"}
+    if not str(match.get("name") or "").startswith(_NAME_PREFIX):
+        return {
+            "ok": False,
+            "error": f"job {target!r} is not a workflow schedule "
+            f"(name must start with {_NAME_PREFIX!r}): refusing {verb}",
+        }
+    reply = _cron({"action": verb, "job_id": target})
     if reply is None:
         return {"ok": False, "error": "the host scheduler is not available here"}
     if not reply.get("success"):

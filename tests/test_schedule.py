@@ -149,9 +149,38 @@ def test_a_refused_listing_is_unavailable(cron):
 
 @pytest.mark.parametrize("action", ["pause", "resume", "run", "remove"])
 def test_actions_pass_through_to_the_host_tool(cron, action):
-    cron.box["reply"] = {"success": True, "job": {"job_id": "j1", "name": "workflow:daily"}}
+    cron.box["reply"] = {
+        "success": True,
+        "jobs": [{"job_id": "j1", "name": "workflow:daily"}],
+        "job": {"job_id": "j1", "name": "workflow:daily"},
+    }
     assert schedule.apply_action(action, "j1")["ok"] is True
-    assert cron == [{"action": action, "job_id": "j1"}]
+    assert cron == [{"action": "list"}, {"action": action, "job_id": "j1"}]
+
+
+def test_actions_refuse_a_foreign_cron_job(cron):
+    cron.box["reply"] = {
+        "success": True,
+        "jobs": [{"job_id": "j2", "name": "inbox sweep"}],
+        "job": {"job_id": "j2", "name": "inbox sweep"},
+    }
+    outcome = schedule.apply_action("pause", "j2")
+    assert outcome["ok"] is False and "workflow:" in outcome["error"]
+    assert cron == [{"action": "list"}]
+
+
+def test_actions_refuse_an_unknown_job_id(cron):
+    cron.box["reply"] = {"success": True, "jobs": []}
+    outcome = schedule.apply_action("remove", "ghost")
+    assert outcome["ok"] is False and "ghost" in outcome["error"]
+    assert cron == [{"action": "list"}]
+
+
+def test_a_malformed_job_list_is_a_refusal_not_an_exception(cron):
+    cron.box["reply"] = {"success": True, "jobs": {"j1": "workflow:daily"}}
+    outcome = schedule.apply_action("pause", "j1")
+    assert outcome["ok"] is False and "malformed" in outcome["error"]
+    assert cron == [{"action": "list"}]
 
 
 def test_an_unknown_action_never_reaches_the_host(cron):

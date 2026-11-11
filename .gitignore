@@ -7,6 +7,10 @@ build/
 /dist/
 *.egg-info/
 
+# Dev live-probes and screenshots (local only; must not ship with the plugin).
+.hermes/
+.freebuff/
+
 # Local secrets must never be committed.
 .env
 .env.*
