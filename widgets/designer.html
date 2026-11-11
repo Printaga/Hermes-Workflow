@@ -411,6 +411,10 @@
   // actually run, so the picker offers those. Set alongside the catalog.
   var currentProvider = "";
   var channels = [];    // host channel directory: [{id, label, kind, platform}]
+  // Latest mounted run's outputs by node id, painted under their nodes by draw().
+  // Kept with the run's design name so switching designs never paints stale text.
+  var lastOutputs = {};
+  var lastRunName = "";
   var lastRunId = "";   // the run the resume box answers
   var lastStatus = "";  // that run's last seen status: only a failed one is retryable
 
@@ -640,6 +644,45 @@
     return lines;
   }
 
+  /** One node's last-run output as short canvas lines: strings verbatim, anything
+   *  else as JSON, capped before wrapping so a digest cannot bury the canvas.
+   *  Slicing is code-point based so emoji never splits into tofu. */
+  function summarizeOutputs(result) {
+    var out = {};
+    var outputs = (result && result.outputs) || {};
+    Object.keys(outputs).forEach(function (id) {
+      var text = outputs[id];
+      text = typeof text === "string" ? text : JSON.stringify(text);
+      text = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+      var chars = Array.from(text);
+      if (chars.length > 140) { text = chars.slice(0, 139).join("") + "…"; }
+      if (text) { out[id] = text; }
+    });
+    return out;
+  }
+
+  /** Wrapped excerpt of one node's last output, or [] when there is nothing to show
+   *  (no run yet, or the mounted run belongs to another design). */
+  function outputLines(id) {
+    if (!lastRunName || lastRunName !== graph.name) { return []; }
+    var rest = lastOutputs[id] || "";
+    if (!rest) { return []; }
+    var lines = [];
+    var chars = Array.from(rest);
+    while (chars.length && lines.length < 2) {
+      if (chars.length <= 22) { lines.push(chars.join("")); break; }
+      var cut = chars.lastIndexOf(" ", 22);
+      if (cut < 8) { cut = 22; }
+      lines.push(chars.slice(0, cut).join("").trim());
+      chars = chars.slice(cut);
+      while (chars.length && chars[0] === " ") { chars.shift(); }
+    }
+    if (chars.length && lines.length === 2) {
+      lines[1] = Array.from(lines[1]).slice(0, 21).join("") + "…";
+    }
+    return lines;
+  }
+
   // ------------------------------------------------------- inspector panel
   // Collapsed to a 30px strip by default; a selection opens it, the toggle closes it.
   function setInspector(open) {
@@ -757,6 +800,14 @@
         });
         row.textContent = text;
         g.appendChild(row);
+      });
+      outputLines(n.id).forEach(function (text, line) {
+        var out = svgEl("text", {
+          x: 9, y: NODE_H + 12 + line * 11, "font-size": 9, fill: "var(--muted-foreground, #9a9a9a)",
+          class: "vw-output"
+        });
+        out.textContent = text;
+        g.appendChild(out);
       });
 
       // A note has no ports at all: it takes no part in the graph, so there is nothing to
@@ -1518,6 +1569,16 @@
     var runId = result.run_id || "";
     lastRunId = runId;
     lastStatus = String(status || "");
+    if (result && result.outputs && Object.keys(result.outputs).length) {
+      lastOutputs = summarizeOutputs(result);
+      lastRunName = result.name || graph.name;
+      draw();
+    } else {
+      // No outputs in this mount (a fresh failure, a parked gate): drop the previous
+      // run's excerpts instead of showing stale text next to a new verdict.
+      lastOutputs = {};
+      lastRunName = "";
+    }
     var box = document.getElementById("run");
     box.textContent = "";
     box.hidden = false;

@@ -260,3 +260,40 @@ def test_the_collapsed_inspector_does_not_ask_for_a_percentage_height(name):
     assert "height:100%" not in compact(match.group(1)), (
         f"{name} collapsed toggle asks for a percentage height inside an auto-height row"
     )
+
+
+# ------------------------------------------------- finished runs: show the result
+def test_a_finished_run_row_offers_its_result(canvas):
+    name, source = canvas
+    if name == "widget":
+        pytest.skip("the standalone widget has no Runs view")
+    # A finished run's text lives only on disk; the row must offer it, not just the
+    # design. Both surfaces mount the stored run through the single-run fetch.
+    assert 'TIPS["runs.result"]' in source, f"{name} has no tooltip for the Result control"
+    if name == "desktop":
+        assert "showStoredRun(run)" in body_of(source, "runRow"), (
+            f"{name} Result control does not reopen the stored run")
+    else:
+        assert "props.onResult(row)" in source, f"{name} Result control is not wired"
+        assert "onResult: showStoredResult" in source, f"{name} never mounts the stored run"
+        assert '"/runs/" + encodeURIComponent(row.run_id)' in source, (
+            f"{name} Result control does not fetch the stored run")
+
+
+# --------------------------------------- finished runs paint onto the canvas
+def test_a_mounted_run_paints_excerpts_under_its_nodes(canvas):
+    name, source = canvas
+    # No schema change, no new node kind: the canvas excerpts the mounted run's
+    # outputs (already in the run state) beneath the nodes that produced them, and
+    # only while the mounted run belongs to the open design.
+    assert "summarizeOutputs(result)" in source, f"{name} never captures a run's outputs"
+    assert "outputLines(n.id)" in source, f"{name} never paints outputs under nodes"
+    assert "lastRunName !== graph.name" in source, (
+        f"{name} can paint one design's outputs onto another")
+    # A fresh failure or parked gate must drop the previous run's excerpts, and
+    # slicing must be code-point based so emoji never splits into tofu.
+    assert 'lastRunName = ""' in source, f"{name} never clears stale excerpts"
+    assert "Array.from" in body_of(source, "summarizeOutputs"), (
+        f"{name} caps output text on UTF-16 units")
+    assert "Array.from" in body_of(source, "outputLines"), (
+        f"{name} wraps output text on UTF-16 units")

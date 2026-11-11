@@ -105,6 +105,7 @@
     "runs.agent": "Let the host agent produce this step's output now, then resume right where it paused.",
     "runs.retry": "Re-run this failed run from the step that failed; steps that already finished are kept.",
     "runs.open": "Open the saved workflow this run belongs to.",
+    "runs.result": "Show this finished run's outputs in the run panel.",
     "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
 
@@ -476,6 +477,10 @@
     var linkArm = null;   // source node id after a click on an output port
     var dragLink = null;  // live drag from an output port: {from, x1, y1, x2, y2}
     var lastRun = null;
+    // Latest mounted run's outputs by node id, painted under their nodes by draw().
+    // Kept with the run's design name so switching designs never paints stale text.
+    var lastOutputs = {};
+    var lastRunName = "";
     var savedNames = [];   // names known to exist server-side; Run refuses a draft instead of 404ing
     var designsLoaded = false;  // only gate Run once GET /designs actually succeeded
     var sizeObserver = null;    // kept so unmount can disconnect it
@@ -524,7 +529,46 @@
         lines.push(text.slice(0, cut).trim());
         text = text.slice(cut).trim();
       }
-      if (text && lines.length === 2) lines[1] = lines[1].slice(0, 21) + "\u2026";
+      if (text && lines.length === 2) { lines[1] = lines[1].slice(0, 21) + "\u2026"; }
+      return lines;
+    }
+
+    /** One node's last-run output as short canvas lines: strings verbatim, anything
+     *  else as JSON, capped before wrapping so a digest cannot bury the canvas.
+     *  Slicing is code-point based so emoji never splits into tofu. */
+    function summarizeOutputs(result) {
+      var out = {};
+      var outputs = (result && result.outputs) || {};
+      Object.keys(outputs).forEach(function (id) {
+        var text = outputs[id];
+        text = typeof text === "string" ? text : JSON.stringify(text);
+        text = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+        var chars = Array.from(text);
+        if (chars.length > 140) { text = chars.slice(0, 139).join("") + "\u2026"; }
+        if (text) { out[id] = text; }
+      });
+      return out;
+    }
+
+    /** Wrapped excerpt of one node's last output, or [] when there is nothing to show
+     *  (no run yet, or the mounted run belongs to another design). */
+    function outputLines(id) {
+      if (!lastRunName || lastRunName !== graph.name) { return []; }
+      var rest = lastOutputs[id] || "";
+      if (!rest) { return []; }
+      var lines = [];
+      var chars = Array.from(rest);
+      while (chars.length && lines.length < 2) {
+        if (chars.length <= 22) { lines.push(chars.join("")); break; }
+        var cut = chars.lastIndexOf(" ", 22);
+        if (cut < 8) { cut = 22; }
+        lines.push(chars.slice(0, cut).join("").trim());
+        chars = chars.slice(cut);
+        while (chars.length && chars[0] === " ") { chars.shift(); }
+      }
+      if (chars.length && lines.length === 2) {
+        lines[1] = Array.from(lines[1]).slice(0, 21).join("") + "\u2026";
+      }
       return lines;
     }
 
@@ -656,6 +700,14 @@
           });
           row.textContent = text;
           g.appendChild(row);
+        });
+        outputLines(n.id).forEach(function (text, line) {
+          var out = svgEl("text", {
+            x: 9, y: NODE_H + 12 + line * 11, "font-size": 9, fill: "var(--vw-dim)",
+            class: "vw-output",
+          });
+          out.textContent = text;
+          g.appendChild(out);
         });
 
         // A note has no ports at all: it takes no part in the graph, so there is nothing to
@@ -1735,6 +1787,16 @@
 
     function renderRun(result) {
       lastRun = result;
+      if (result && result.outputs && Object.keys(result.outputs).length) {
+        lastOutputs = summarizeOutputs(result);
+        lastRunName = result.name || graph.name;
+        draw();
+      } else {
+        // No outputs in this mount (a fresh failure, a parked gate): drop the previous
+        // run's excerpts instead of showing stale text next to a new verdict.
+        lastOutputs = {};
+        lastRunName = "";
+      }
       var box = el.run;
       box.textContent = "";
       var status = result.status;
@@ -2220,6 +2282,13 @@
           onClick: function () { retryRow(row); },
         }, "Retry"));
       }
+      if (row.status === "done") {
+        actions.push(h("button", {
+          key: "result", type: "button", className: "vw-pill",
+          title: TIPS["runs.result"], disabled: busy === row.run_id,
+          onClick: function () { props.onResult(row); },
+        }, "Result"));
+      }
       actions.push(h("button", {
         key: "open", type: "button", className: "vw-pill", title: TIPS["runs.open"],
         onClick: function () { props.onOpen(row.name); },
@@ -2361,11 +2430,23 @@
       });
     }
 
-    // A paused agent step is answered in the run panel, so "Answer" has to land the user there
-    // with that run mounted — the whole point is to remove the "go somewhere else" dead end.
+    // A finished run's text lives only on disk; "Result" mounts it in the run panel
+    // through the same single-run fetch the Answer path uses.
+    function showStoredResult(row) {
+      if (!row || !row.run_id) return;
+      setView("designer");
+      fetchJSON(API + "/runs/" + encodeURIComponent(row.run_id)).then(function (run) {
+        if (designerRef.current && run) designerRef.current.showRun(run);
+      }).catch(function (err) {
+        setError(explain(err));
+      });
+    }
     function answerStored(row) {
       if (!row || !row.name) return;
       open(row.name);
+      // A paused agent step is answered in the run panel, so "Answer" lands the user
+      // there with that run mounted — the whole point is to remove the "go somewhere
+      // else" dead end.
       setView("designer");
       fetchJSON(API + "/runs/" + encodeURIComponent(row.run_id)).then(function (run) {
         if (designerRef.current && run) designerRef.current.showRun(run);
@@ -2462,6 +2543,7 @@
                 setView("designer");
               },
               onAnswer: answerStored,
+              onResult: showStoredResult,
             }))
           : h("div", { className: "vw-stage", ref: hostRef })
     );

@@ -89,6 +89,7 @@ const TIPS = {
   "runs.agent": "Let the host agent produce this step's output now, then resume right where it paused.",
   "runs.retry": "Re-run this failed run from the step that failed; steps that already finished are kept.",
   "runs.open": "Open the saved workflow this run belongs to.",
+  "runs.result": "Show this finished run's outputs in the run panel.",
   "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
 
@@ -486,6 +487,10 @@ function createDesigner(host, call) {
   let currentProvider = "";
   let channels = [];    // delivery targets ("chats") offered to output nodes
   let lastRun = null;
+  // Latest mounted run's outputs by node id, painted under their nodes by draw().
+  // Kept with the run's design name so switching designs never paints stale text.
+  let lastOutputs = {};
+  let lastRunName = "";
   let savedNames = [];  // names known to exist server-side; Run refuses a draft instead of 404ing
   let designsLoaded = false;  // only gate Run once GET /designs actually succeeded
   let sizeObserver = null;    // kept so an unmount can disconnect it
@@ -533,6 +538,45 @@ function createDesigner(host, call) {
       text = text.slice(cut).trim();
     }
     if (text && lines.length === 2) lines[1] = lines[1].slice(0, 21) + "\u2026";
+    return lines;
+  }
+
+  /** One node's last-run output as short canvas lines: strings verbatim, anything
+   *  else as JSON, capped before wrapping so a digest cannot bury the canvas.
+   *  Slicing is code-point based so emoji never splits into tofu. */
+  function summarizeOutputs(result) {
+    const out = {};
+    const outputs = (result && result.outputs) || {};
+    Object.keys(outputs).forEach((id) => {
+      let text = outputs[id];
+      text = typeof text === "string" ? text : JSON.stringify(text);
+      text = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+      const chars = Array.from(text);
+      if (chars.length > 140) text = chars.slice(0, 139).join("") + "\u2026";
+      if (text) out[id] = text;
+    });
+    return out;
+  }
+
+  /** Wrapped excerpt of one node's last output, or [] when there is nothing to show
+   *  (no run yet, or the mounted run belongs to another design). */
+  function outputLines(id) {
+    if (!lastRunName || lastRunName !== graph.name) return [];
+    const rest = lastOutputs[id] || "";
+    if (!rest) return [];
+    const lines = [];
+    let chars = Array.from(rest);
+    while (chars.length && lines.length < 2) {
+      if (chars.length <= 22) { lines.push(chars.join("")); break; }
+      let cut = chars.lastIndexOf(" ", 22);
+      if (cut < 8) cut = 22;
+      lines.push(chars.slice(0, cut).join("").trim());
+      chars = chars.slice(cut);
+      while (chars.length && chars[0] === " ") chars.shift();
+    }
+    if (chars.length && lines.length === 2) {
+      lines[1] = Array.from(lines[1]).slice(0, 21).join("") + "\u2026";
+    }
     return lines;
   }
 
@@ -664,6 +708,14 @@ function createDesigner(host, call) {
         });
         row.textContent = text;
         g.appendChild(row);
+      });
+      outputLines(n.id).forEach((text, line) => {
+        const out = svgEl("text", {
+          x: 9, y: NODE_H + 12 + line * 11, "font-size": 9, fill: "var(--vw-dim)",
+          class: "vw-output",
+        });
+        out.textContent = text;
+        g.appendChild(out);
       });
 
       // A note has no ports at all: it takes no part in the graph, so there is nothing to
@@ -1711,6 +1763,18 @@ function createDesigner(host, call) {
     });
   }
 
+  // A finished run's text lives only on disk; mount it without disturbing the canvas:
+  // no design load, so a renamed or deleted design cannot hide a stored result.
+  function showStoredRun(run) {
+    if (!run || !run.run_id) return;
+    showView("designer");
+    call("/runs/" + encodeURIComponent(run.run_id)).then((state) => {
+      if (state) renderRun(state);
+    }).catch((err) => {
+      el.railError.textContent = explain(err);
+    });
+  }
+
   function runRow(run) {
     const row = document.createElement("div");
     row.className = "vw-job";
@@ -1798,6 +1862,13 @@ function createDesigner(host, call) {
       const retry = button("Retry", () => retryStoredRun(run));
       retry.title = TIPS["runs.retry"];
       actions.appendChild(retry);
+    }
+    if (run.status === "done") {
+      // Mounts the stored result only — unlike Open, a renamed or deleted design
+      // cannot hide a finished run's outputs.
+      const result = button("Result", () => showStoredRun(run));
+      result.title = TIPS["runs.result"];
+      actions.appendChild(result);
     }
     if (run.name) {
       const reopen = button("Open", () => {
@@ -2292,6 +2363,16 @@ function createDesigner(host, call) {
 
   function renderRun(result) {
     lastRun = result;
+    if (result && result.outputs && Object.keys(result.outputs).length) {
+      lastOutputs = summarizeOutputs(result);
+      lastRunName = result.name || graph.name;
+      draw();
+    } else {
+      // No outputs in this mount (a fresh failure, a parked gate): drop the previous
+      // run's excerpts instead of showing stale text next to a new verdict.
+      lastOutputs = {};
+      lastRunName = "";
+    }
     const box = el.run;
     box.textContent = "";
     const status = result.status;

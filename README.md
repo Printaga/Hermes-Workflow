@@ -165,7 +165,11 @@ Click an edge and press **Delete** (or double-click it) to cut it; edges that wo
 loop are refused before they exist. The
 inspector edits the selected node; **Validate** runs the same rules as the Python validator;
 **Copy JSON** produces the text for `/workflow save`; **Save to Hermes** sends that command
-straight to chat when the host exposes `window.hermes.send`, and copies it otherwise.
+straight to chat when the host exposes `window.hermes.send`, and copies it otherwise. After a
+run, each node shows an excerpt of what it produced underneath itself (full text in the run
+panel; the Runs view recalls it later with a **Result** button). Excerpts key off node ids,
+so deleting a node and re-adding one with the same id can briefly show the old run's text
+until the next run.
 
 The agent-facing tools mirror the verbs:
 
