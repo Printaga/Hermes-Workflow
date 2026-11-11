@@ -415,6 +415,9 @@
   // Kept with the run's design name so switching designs never paints stale text.
   var lastOutputs = {};
   var lastRunName = "";
+  // Full per-node text of the mounted run (capped): the canvas shows excerpts, the
+  // inspector shows everything for the selected node, the run panel keeps it all.
+  var lastFull = {};
   var lastRunId = "";   // the run the resume box answers
   var lastStatus = "";  // that run's last seen status: only a failed one is retryable
 
@@ -661,6 +664,25 @@
     return out;
   }
 
+  /** Full text of one run's outputs by node id, capped so a huge payload cannot
+   *  swell the inspector: the run panel keeps the whole thing. Slicing is
+   *  code-point based so emoji never splits into tofu. */
+  function fullOutputs(result) {
+    var out = {};
+    var outputs = (result && result.outputs) || {};
+    Object.keys(outputs).forEach(function (id) {
+      var text = outputs[id];
+      text = typeof text === "string" ? text : JSON.stringify(text, null, 2);
+      text = String(text == null ? "" : text);
+      var chars = Array.from(text);
+      if (chars.length > 2000) {
+        text = chars.slice(0, 1999).join("") + "… (truncated, full text in run panel)";
+      }
+      if (text) { out[id] = text; }
+    });
+    return out;
+  }
+
   /** Wrapped excerpt of one node's last output, or [] when there is nothing to show
    *  (no run yet, or the mounted run belongs to another design). */
   function outputLines(id) {
@@ -759,6 +781,9 @@
           ev.stopPropagation();
           cutEdge(parent.id, n.id);
         });
+        hit.addEventListener("contextmenu", function (ev) {
+          showCtxMenu(ev, "Cut connection", function () { cutEdge(parent.id, n.id); });
+        });
         svg.appendChild(path);
         svg.appendChild(hit);
       });
@@ -856,7 +881,48 @@
     return matrix ? pt.matrixTransform(matrix.inverse()) : { x: ev.clientX, y: ev.clientY };
   }
 
+  // Right-click opens a one-item menu instead of deleting outright: the destructive
+  // choice stays explicit, but still draft-level like the Delete key (only Save
+  // persists anything). One menu at a time; any click closes it.
+  function closeCtxMenu() {
+    var open = document.querySelector(".vw-ctxmenu");
+    if (open) open.remove();
+    document.removeEventListener("click", closeCtxMenu);
+  }
+
+  function showCtxMenu(ev, label, action) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeCtxMenu();
+    var menu = document.createElement("div");
+    menu.className = "vw-ctxmenu";
+    menu.style.position = "fixed";
+    menu.style.zIndex = "60";
+    menu.style.left = Math.max(0, Math.min(ev.clientX, window.innerWidth - 150)) + "px";
+    menu.style.top = Math.max(0, Math.min(ev.clientY, window.innerHeight - 60)) + "px";
+    var item = document.createElement("button");
+    item.type = "button";
+    item.className = "pill";
+    item.textContent = label;
+    item.addEventListener("click", function (clickEv) {
+      clickEv.stopPropagation();
+      closeCtxMenu();
+      action();
+    });
+    menu.appendChild(item);
+    document.body.appendChild(menu);
+    document.addEventListener("click", closeCtxMenu);
+  }
+
   function wireNode(g, n) {
+    // Right-click offers Delete in a menu; the menu item does the deleting.
+    g.addEventListener("contextmenu", function (ev) {
+      showCtxMenu(ev, "Delete node", function () {
+        selected = n.id;
+        selectedEdge = null;
+        removeSelected();
+      });
+    });
     g.addEventListener("mousedown", function (ev) {
       if (ev.button !== 0) { return; }
       // A port handler already claimed this press (stopPropagation also covers it, but a port
@@ -1451,6 +1517,19 @@
         : "Bare platform for its home channel, or platform:chat id for one chat.";
       box.appendChild(targetHint);
     }
+    var full = lastRunName && lastRunName === graph.name ? lastFull[current.id] : null;
+    if (full) {
+      // The canvas excerpt is two lines; the selected node shows everything here.
+      var outLabel = document.createElement("p");
+      outLabel.className = "hint";
+      outLabel.textContent = "last output";
+      var outPre = document.createElement("pre");
+      outPre.textContent = full;
+      outPre.style.maxHeight = "200px";
+      outPre.style.overflow = "auto";
+      box.appendChild(outLabel);
+      box.appendChild(outPre);
+    }
   }
 
   // -------------------------------------------------------------- feedback
@@ -1571,12 +1650,14 @@
     lastStatus = String(status || "");
     if (result && result.outputs && Object.keys(result.outputs).length) {
       lastOutputs = summarizeOutputs(result);
+      lastFull = fullOutputs(result);
       lastRunName = result.name || graph.name;
       draw();
     } else {
       // No outputs in this mount (a fresh failure, a parked gate): drop the previous
       // run's excerpts instead of showing stale text next to a new verdict.
       lastOutputs = {};
+      lastFull = {};
       lastRunName = "";
     }
     var box = document.getElementById("run");

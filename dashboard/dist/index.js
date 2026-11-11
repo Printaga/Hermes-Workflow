@@ -106,6 +106,8 @@
     "runs.retry": "Re-run this failed run from the step that failed; steps that already finished are kept.",
     "runs.open": "Open the saved workflow this run belongs to.",
     "runs.result": "Show this finished run's outputs in the run panel.",
+    "runs.delete": "Delete this stored run. Asks first; a paused gate goes with it.",
+    "bar.delete_design": "Delete the open saved workflow. Asks first; refused while a schedule replays it.",
     "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
 
@@ -481,6 +483,9 @@
     // Kept with the run's design name so switching designs never paints stale text.
     var lastOutputs = {};
     var lastRunName = "";
+    // Full per-node text of the mounted run (capped): the canvas shows excerpts, the
+    // inspector shows everything for the selected node, the run panel keeps it all.
+    var lastFull = {};
     var savedNames = [];   // names known to exist server-side; Run refuses a draft instead of 404ing
     var designsLoaded = false;  // only gate Run once GET /designs actually succeeded
     var sizeObserver = null;    // kept so unmount can disconnect it
@@ -545,6 +550,25 @@
         text = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
         var chars = Array.from(text);
         if (chars.length > 140) { text = chars.slice(0, 139).join("") + "\u2026"; }
+        if (text) { out[id] = text; }
+      });
+      return out;
+    }
+
+    /** Full text of one run's outputs by node id, capped so a huge payload cannot
+     *  swell the inspector: the run panel keeps the whole thing. Slicing is
+     *  code-point based so emoji never splits into tofu. */
+    function fullOutputs(result) {
+      var out = {};
+      var outputs = (result && result.outputs) || {};
+      Object.keys(outputs).forEach(function (id) {
+        var text = outputs[id];
+        text = typeof text === "string" ? text : JSON.stringify(text, null, 2);
+        text = String(text == null ? "" : text);
+        var chars = Array.from(text);
+        if (chars.length > 2000) {
+          text = chars.slice(0, 1999).join("") + "\u2026 (truncated, full text in run panel)";
+        }
         if (text) { out[id] = text; }
       });
       return out;
@@ -655,6 +679,9 @@
             ev.stopPropagation();
             cutEdge(parent.id, n.id);
           });
+          hit.addEventListener("contextmenu", function (ev) {
+            showCtxMenu(ev, "Cut connection", function () { cutEdge(parent.id, n.id); });
+          });
           svg.appendChild(path);
           svg.appendChild(hit);
         });
@@ -755,7 +782,52 @@
       return matrix ? pt.matrixTransform(matrix.inverse()) : { x: ev.clientX, y: ev.clientY };
     }
 
+    // Right-click opens a one-item menu instead of deleting outright: the destructive
+    // choice stays explicit, but still draft-level like the Delete key (only Save
+    // persists anything). One menu at a time; any click closes it.
+    function closeCtxMenu() {
+      var open = document.querySelector(".vw-ctxmenu");
+      if (open) open.remove();
+      document.removeEventListener("click", closeCtxMenu);
+    }
+
+    function showCtxMenu(ev, label, action) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeCtxMenu();
+      var menu = document.createElement("div");
+      menu.className = "vw-ctxmenu";
+      menu.style.position = "fixed";
+      menu.style.zIndex = "60";
+      menu.style.left = Math.max(0, Math.min(ev.clientX, window.innerWidth - 150)) + "px";
+      menu.style.top = Math.max(0, Math.min(ev.clientY, window.innerHeight - 60)) + "px";
+      menu.style.background = "var(--vw-node)";
+      menu.style.border = "1px solid var(--vw-line)";
+      menu.style.borderRadius = "6px";
+      menu.style.padding = "4px";
+      var item = document.createElement("button");
+      item.type = "button";
+      item.className = "vw-pill";
+      item.textContent = label;
+      item.addEventListener("click", function (clickEv) {
+        clickEv.stopPropagation();
+        closeCtxMenu();
+        action();
+      });
+      menu.appendChild(item);
+      document.body.appendChild(menu);
+      document.addEventListener("click", closeCtxMenu);
+    }
+
     function wireNode(g, n) {
+      // Right-click offers Delete in a menu; the menu item does the deleting.
+      g.addEventListener("contextmenu", function (ev) {
+        showCtxMenu(ev, "Delete node", function () {
+          selected = n.id;
+          selectedEdge = null;
+          removeSelected();
+        });
+      });
       g.addEventListener("mousedown", function (ev) {
         if (ev.button !== 0) return;
         // A port handler already claimed this press (stopPropagation also covers it, but a
@@ -1507,6 +1579,19 @@
           : "Bare platform for its home channel, or platform:chat id for one chat.";
         box.appendChild(targetHint);
       }
+      var full = lastRunName && lastRunName === graph.name ? lastFull[current.id] : null;
+      if (full) {
+        // The canvas excerpt is two lines; the selected node shows everything here.
+        var outLabel = document.createElement("p");
+        outLabel.className = "vw-muted";
+        outLabel.textContent = "last output";
+        var outPre = document.createElement("pre");
+        outPre.textContent = full;
+        outPre.style.maxHeight = "200px";
+        outPre.style.overflow = "auto";
+        box.appendChild(outLabel);
+        box.appendChild(outPre);
+      }
     }
 
     function note(message) {
@@ -1789,12 +1874,14 @@
       lastRun = result;
       if (result && result.outputs && Object.keys(result.outputs).length) {
         lastOutputs = summarizeOutputs(result);
+        lastFull = fullOutputs(result);
         lastRunName = result.name || graph.name;
         draw();
       } else {
         // No outputs in this mount (a fresh failure, a parked gate): drop the previous
         // run's excerpts instead of showing stale text next to a new verdict.
         lastOutputs = {};
+        lastFull = {};
         lastRunName = "";
       }
       var box = el.run;
@@ -2246,6 +2333,26 @@
       });
     }
 
+    // Every row can go — done, failed, or parked: the confirm names the run, and a
+    // blocked confirm() is a "no" (never delete on ambiguity).
+    function remove(row) {
+      if (typeof window.confirm === "function" &&
+          !window.confirm("Delete run " + row.run_id + " (" + (row.name || "unnamed") +
+            ")? This cannot be undone.")) return;
+      setBusy(row.run_id);
+      setNote("deleting \u2026");
+      fetchJSON(API + "/runs/" + encodeURIComponent(row.run_id), {
+        method: "DELETE",
+      }).then(function () {
+        setBusy("");
+        setNote("");
+        fresh();
+      }).catch(function (err) {
+        setBusy("");
+        setNote(explain(err));
+      });
+    }
+
     /** "3m ago" — the row has to say how old a waiting gate is. */
     function when(seconds) {
       var age = Math.max(0, Math.round(Date.now() / 1000 - Number(seconds || 0)));
@@ -2289,6 +2396,11 @@
           onClick: function () { props.onResult(row); },
         }, "Result"));
       }
+      actions.push(h("button", {
+        key: "delete", type: "button", className: "vw-pill",
+        title: TIPS["runs.delete"], disabled: busy === row.run_id,
+        onClick: function () { remove(row); },
+      }, "Delete"));
       actions.push(h("button", {
         key: "open", type: "button", className: "vw-pill", title: TIPS["runs.open"],
         onClick: function () { props.onOpen(row.name); },
@@ -2461,6 +2573,33 @@
       if (designerRef.current) designerRef.current.newDesign("untitled");
     }
 
+    // Delete the open saved workflow, never a draft: prefer the name the design was
+    // opened or saved under, falling back to the canvas graph name when that name
+    // exists server-side (a fresh Save does not touch `active`).
+    function removeActive() {
+      var current = designerRef.current ? designerRef.current.getGraph() : null;
+      var name = active;
+      if ((!name || designs.indexOf(name) < 0) && current && designs.indexOf(current.name) >= 0) {
+        name = current.name;
+      }
+      if (!name || designs.indexOf(name) < 0) {
+        setError("Nothing saved open — open a saved workflow first.");
+        return;
+      }
+      if (typeof window.confirm === "function" &&
+          !window.confirm("Delete saved workflow \u201c" + name + "\u201d? This cannot be undone.")) return;
+      fetchJSON(API + "/designs/" + encodeURIComponent(name), { method: "DELETE" }).then(function (data) {
+        if (data && data.ok) {
+          blank();
+          refresh();
+        } else {
+          setError((data && data.detail) || "Delete failed.");
+        }
+      }).catch(function (err) {
+        setError(explain(err));
+      });
+    }
+
     // A template is a draft, not a saved design: it loads onto the canvas and the user saves it
     // under their own name, so two people can start from "Review gate" without colliding.
     function useTemplate(name) {
@@ -2525,6 +2664,8 @@
         })),
       h("button", { key: "new", type: "button", className: "vw-pill",
         title: TIPS["bar.new"], onClick: blank }, "New"),
+      h("button", { key: "delete-design", type: "button", className: "vw-pill",
+        title: TIPS["bar.delete_design"], onClick: removeActive }, "Delete"),
       error ? h("p", { key: "err", className: "vw-error" }, error) : null
     );
 

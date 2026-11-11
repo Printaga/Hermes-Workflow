@@ -161,8 +161,8 @@ The designer itself is one static file:
 Click a node kind in the palette (or drag it onto the canvas) and drag nodes to arrange them.
 Every node carries an output port on its right edge and an input port on its left (all but a
 trigger, which can have no parents): drag from the output port to another node to add an edge.
-Click an edge and press **Delete** (or double-click it) to cut it; edges that would close a
-loop are refused before they exist. The
+Click an edge and press **Delete** (or double-click it) to cut it; right-click a node or a
+connection for a Delete/Cut menu; edges that would close a loop are refused before they exist.
 inspector edits the selected node; **Validate** runs the same rules as the Python validator;
 **Copy JSON** produces the text for `/workflow save`; **Save to Hermes** sends that command
 straight to chat when the host exposes `window.hermes.send`, and copies it otherwise. After a

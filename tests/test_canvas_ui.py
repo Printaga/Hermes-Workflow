@@ -280,6 +280,42 @@ def test_a_finished_run_row_offers_its_result(canvas):
             f"{name} Result control does not fetch the stored run")
 
 
+# ------------------------------------------------------- deletion, human paths
+def test_finished_work_can_be_deleted_from_the_gui(canvas):
+    name, source = canvas
+    if name == "widget":
+        pytest.skip("the standalone widget has no lists to delete from")
+    # Saved workflows: a Delete control next to New, refused while scheduled.
+    assert 'TIPS["bar.delete_design"]' in source, f"{name} never tips design deletion"
+    # Stored runs: every row offers Delete with a confirm, then re-reads the list.
+    assert 'TIPS["runs.delete"]' in source, f"{name} never tips run deletion"
+    assert '{ method: "DELETE" }' in source, f"{name} never issues a DELETE request"
+    if name == "desktop":
+        assert 'data-vw="delete-design"' in source, f"{name} has no design Delete button"
+        assert 'call("/designs/" + encodeURIComponent(name), { method: "DELETE" })' in source, (
+            f"{name} design Delete never calls the backend")
+        assert 'call("/runs/" + encodeURIComponent(run.run_id), { method: "DELETE" })' in source, (
+            f"{name} run Delete never calls the backend")
+    else:
+        assert 'key: "delete-design"' in source, f"{name} has no design Delete button"
+        assert "removeActive" in source, f"{name} never deletes the open design"
+        assert "remove(row)" in source, f"{name} never deletes a stored run"
+        assert '"/runs/" + encodeURIComponent(row.run_id), {' in source, (
+            f"{name} run Delete never calls the backend")
+
+
+# --------------------------------------- right-click deletion on the canvas
+def test_right_click_deletes_nodes_and_cuts_edges(canvas):
+    name, source = canvas
+    # Right-click opens a one-item menu: "Delete node" on nodes (which selects and
+    # removes), "Cut connection" on edges. No confirm — draft-level like Delete.
+    node_body = body_of(source, "wireNode")
+    assert "showCtxMenu" in node_body, f"{name} right-click never opens a menu"
+    assert '"Delete node"' in node_body, f"{name} menu never offers node deletion"
+    assert '"Cut connection"' in source, f"{name} menu never offers cutting the edge"
+    assert "vw-ctxmenu" in source, f"{name} menu has no dismissable element"
+
+
 # --------------------------------------- finished runs paint onto the canvas
 def test_a_mounted_run_paints_excerpts_under_its_nodes(canvas):
     name, source = canvas
@@ -297,3 +333,8 @@ def test_a_mounted_run_paints_excerpts_under_its_nodes(canvas):
         f"{name} caps output text on UTF-16 units")
     assert "Array.from" in body_of(source, "outputLines"), (
         f"{name} wraps output text on UTF-16 units")
+    # The selected node shows the full text in the inspector, not just the canvas lines.
+    assert '"last output"' in body_of(source, "buildInspector"), (
+        f"{name} inspector hides a node's full output")
+    assert "lastFull[current.id]" in body_of(source, "buildInspector"), (
+        f"{name} inspector never reads the mounted run")

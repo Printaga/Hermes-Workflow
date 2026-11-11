@@ -90,6 +90,8 @@ const TIPS = {
   "runs.retry": "Re-run this failed run from the step that failed; steps that already finished are kept.",
   "runs.open": "Open the saved workflow this run belongs to.",
   "runs.result": "Show this finished run's outputs in the run panel.",
+  "runs.delete": "Delete this stored run. Asks first; a paused gate goes with it.",
+  "bar.delete_design": "Delete the open saved workflow. Asks first; refused while a schedule replays it.",
   "runs.refresh": "Re-read the runs saved on this machine, newest first.",
   };
 
@@ -359,6 +361,7 @@ const TEMPLATE =
   '    <select class="vw-grow" data-vw="designs" aria-label="saved workflows"></select>' +
   '    <select class="vw-grow" data-vw="templates" aria-label="start from a template"></select>' +
   '    <button class="vw-pill" type="button" data-vw="new">New</button>' +
+  '    <button class="vw-pill" type="button" data-vw="delete-design">Delete</button>' +
   '    <p class="vw-error" data-vw="rail-error"></p>' +
   "  </div>" +
   '  <div class="vw-stage">' +
@@ -491,6 +494,9 @@ function createDesigner(host, call) {
   // Kept with the run's design name so switching designs never paints stale text.
   let lastOutputs = {};
   let lastRunName = "";
+  // Full per-node text of the mounted run (capped): the canvas shows excerpts, the
+  // inspector shows everything for the selected node, the run panel keeps it all.
+  let lastFull = {};
   let savedNames = [];  // names known to exist server-side; Run refuses a draft instead of 404ing
   let designsLoaded = false;  // only gate Run once GET /designs actually succeeded
   let sizeObserver = null;    // kept so an unmount can disconnect it
@@ -553,6 +559,25 @@ function createDesigner(host, call) {
       text = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
       const chars = Array.from(text);
       if (chars.length > 140) text = chars.slice(0, 139).join("") + "\u2026";
+      if (text) out[id] = text;
+    });
+    return out;
+  }
+
+  /** Full text of one run's outputs by node id, capped so a huge payload cannot
+   *  swell the inspector: the run panel keeps the whole thing. Slicing is
+   *  code-point based so emoji never splits into tofu. */
+  function fullOutputs(result) {
+    const out = {};
+    const outputs = (result && result.outputs) || {};
+    Object.keys(outputs).forEach((id) => {
+      let text = outputs[id];
+      text = typeof text === "string" ? text : JSON.stringify(text, null, 2);
+      text = String(text == null ? "" : text);
+      const chars = Array.from(text);
+      if (chars.length > 2000) {
+        text = chars.slice(0, 1999).join("") + "\u2026 (truncated, full text in run panel)";
+      }
       if (text) out[id] = text;
     });
     return out;
@@ -663,6 +688,9 @@ function createDesigner(host, call) {
           ev.stopPropagation();
           cutEdge(parent.id, n.id);
         });
+        hit.addEventListener("contextmenu", (ev) => {
+          showCtxMenu(ev, "Cut connection", () => cutEdge(parent.id, n.id));
+        });
         svg.appendChild(path);
         svg.appendChild(hit);
       });
@@ -763,7 +791,52 @@ function createDesigner(host, call) {
     return matrix ? pt.matrixTransform(matrix.inverse()) : { x: ev.clientX, y: ev.clientY };
   }
 
+  // Right-click opens a one-item menu instead of deleting outright: the destructive
+  // choice stays explicit, but still draft-level like the Delete key (only Save
+  // persists anything). One menu at a time; any click closes it.
+  function closeCtxMenu() {
+    const open = document.querySelector(".vw-ctxmenu");
+    if (open) open.remove();
+    document.removeEventListener("click", closeCtxMenu);
+  }
+
+  function showCtxMenu(ev, label, action) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeCtxMenu();
+    const menu = document.createElement("div");
+    menu.className = "vw-ctxmenu";
+    menu.style.position = "fixed";
+    menu.style.zIndex = "60";
+    menu.style.left = Math.max(0, Math.min(ev.clientX, window.innerWidth - 150)) + "px";
+    menu.style.top = Math.max(0, Math.min(ev.clientY, window.innerHeight - 60)) + "px";
+    menu.style.background = "var(--vw-node)";
+    menu.style.border = "1px solid var(--vw-line)";
+    menu.style.borderRadius = "6px";
+    menu.style.padding = "4px";
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "vw-pill";
+    item.textContent = label;
+    item.addEventListener("click", (clickEv) => {
+      clickEv.stopPropagation();
+      closeCtxMenu();
+      action();
+    });
+    menu.appendChild(item);
+    document.body.appendChild(menu);
+    document.addEventListener("click", closeCtxMenu);
+  }
+
   function wireNode(g, n) {
+    // Right-click offers Delete in a menu; the menu item does the deleting.
+    g.addEventListener("contextmenu", (ev) => {
+      showCtxMenu(ev, "Delete node", () => {
+        selected = n.id;
+        selectedEdge = null;
+        removeSelected();
+      });
+    });
     g.addEventListener("mousedown", (ev) => {
       if (ev.button !== 0) return;
       // A port handler already claimed this press (stopPropagation also covers it, but a port
@@ -1490,6 +1563,19 @@ function createDesigner(host, call) {
         : "Bare platform for its home channel, or platform:chat id for one chat.";
       box.appendChild(targetHint);
     }
+    const full = lastRunName && lastRunName === graph.name ? lastFull[current.id] : null;
+    if (full) {
+      // The canvas excerpt is two lines; the selected node shows everything here.
+      const outLabel = document.createElement("p");
+      outLabel.className = "vw-muted";
+      outLabel.textContent = "last output";
+      const outPre = document.createElement("pre");
+      outPre.textContent = full;
+      outPre.style.maxHeight = "200px";
+      outPre.style.overflow = "auto";
+      box.appendChild(outLabel);
+      box.appendChild(outPre);
+    }
   }
 
   function note(message) {
@@ -1869,6 +1955,20 @@ function createDesigner(host, call) {
       const result = button("Result", () => showStoredRun(run));
       result.title = TIPS["runs.result"];
       actions.appendChild(result);
+    }
+    {
+      // Every row can go — done, failed, or parked: the confirm names the run, and a
+      // blocked confirm() is a "no" (never delete on ambiguity).
+      const del = button("Delete", () => {
+        if (typeof window.confirm === "function" &&
+            !window.confirm("Delete run " + run.run_id + " (" + (run.name || "unnamed") +
+              ")? This cannot be undone.")) return;
+        call("/runs/" + encodeURIComponent(run.run_id), { method: "DELETE" })
+          .then(() => renderRuns())
+          .catch((err) => { el.railError.textContent = explain(err); });
+      });
+      del.title = TIPS["runs.delete"];
+      actions.appendChild(del);
     }
     if (run.name) {
       const reopen = button("Open", () => {
@@ -2365,12 +2465,14 @@ function createDesigner(host, call) {
     lastRun = result;
     if (result && result.outputs && Object.keys(result.outputs).length) {
       lastOutputs = summarizeOutputs(result);
+      lastFull = fullOutputs(result);
       lastRunName = result.name || graph.name;
       draw();
     } else {
       // No outputs in this mount (a fresh failure, a parked gate): drop the previous
       // run's excerpts instead of showing stale text next to a new verdict.
       lastOutputs = {};
+      lastFull = {};
       lastRunName = "";
     }
     const box = el.run;
@@ -2519,6 +2621,29 @@ function createDesigner(host, call) {
       el.railError.textContent = "";
       loadGraph(Object.assign(clone(BLANK), { name: "untitled" }));
       renderDesigns();
+    });
+    q('[data-vw="delete-design"]').title = TIPS["bar.delete_design"];
+    q('[data-vw="delete-design"]').addEventListener("click", () => {
+      const name = active;
+      if (!name || savedNames.indexOf(name) < 0) {
+        el.railError.textContent = "Nothing saved open — open a saved workflow first.";
+        return;
+      }
+      if (typeof window.confirm === "function" &&
+          !window.confirm("Delete saved workflow \\u201c" + name + "\\u201d? This cannot be undone.")) return;
+      call("/designs/" + encodeURIComponent(name), { method: "DELETE" }).then((data) => {
+        if (data && data.ok) {
+          active = "";
+          loadGraph(Object.assign(clone(BLANK), { name: "untitled" }));
+          renderDesigns();
+          refreshDesigns();
+          note("deleted " + name);
+        } else {
+          el.railError.textContent = (data && data.detail) || "Delete failed.";
+        }
+      }).catch((err) => {
+        el.railError.textContent = explain(err);
+      });
     });
 
     Array.prototype.forEach.call(host.querySelectorAll("[data-kind]"), (b) => {
