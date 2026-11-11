@@ -963,6 +963,9 @@
      *  backend could not list them, in which case the picker degrades to a placeholder. */
     var profiles = options.profiles || [];
     var models = options.models || [];
+    // Slug of the host's active provider ("" when unknown): only its models can
+    // actually run, so the picker offers those. Set alongside the catalog.
+    var currentProvider = "";
 
     function profileByName(name) {
       if (!name) return null;
@@ -1011,8 +1014,10 @@
     }
 
     /** The host catalog as a grouped <select>: one optgroup per provider, because a step names
-     *  exactly one model and the runtime derives its provider. With no catalog the field stays
-     *  typeable, and a saved model the catalog dropped stays selectable. */
+     *  exactly one model and the runtime derives its provider. Only the active provider's
+     *  models are offered — anything else would fail loudly server-side. With no catalog,
+     *  or an unknown active provider, the field stays typeable (fail open, never empty),
+     *  and a saved model the catalog dropped stays selectable. */
     function modelSelect(current) {
       if (!models.length) {
         return textInput(current.model || "", function (v) {
@@ -1020,6 +1025,10 @@
           else delete current.model;
         }, "model id (optional)");
       }
+      var offered = currentProvider
+        ? models.filter(function (p) { return p.slug === currentProvider; })
+        : models;
+      if (!offered.length) { offered = models; }
       var select = document.createElement("select");
       select.title = TIPS["agent.model"];
       var blank = document.createElement("option");
@@ -1028,7 +1037,7 @@
       blank.title = TIPS["agent.model"];
       select.appendChild(blank);
       var known = false;
-      models.forEach(function (p) {
+      offered.forEach(function (p) {
         var group = document.createElement("optgroup");
         group.label = p.label || p.slug;
         (p.models || []).forEach(function (id) {
@@ -1925,9 +1934,11 @@
         profiles = Array.isArray(list) ? list : [];
         if (!el.inspector.contains(document.activeElement)) buildInspector();
       },
-      /** Replace the model catalog the agent inspector offers. */
-      setModels: function (list) {
+      /** Replace the model catalog the agent inspector offers, plus the slug of the
+       *  host's active provider (only its models can actually run). */
+      setModels: function (list, provider) {
         models = Array.isArray(list) ? list : [];
+        currentProvider = (provider && String(provider)) || "";
         if (!el.inspector.contains(document.activeElement)) buildInspector();
       },
       /** Replace the delivery targets the output inspector offers. */
@@ -2296,9 +2307,10 @@
     // answer (no host package) leaves the agent node's model field a free-text input.
     var loadModels = useCallback(function () {
       return fetchJSON(API + "/models").then(function (data) {
-        if (designerRef.current) designerRef.current.setModels((data && data.providers) || []);
+        if (designerRef.current) designerRef.current.setModels((data && data.providers) || [],
+          (data && data.current && data.current["provider"]) || "");
       }).catch(function () {
-        if (designerRef.current) designerRef.current.setModels([]);
+        if (designerRef.current) designerRef.current.setModels([], "");
       });
     }, []);
 

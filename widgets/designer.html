@@ -407,6 +407,9 @@
   var dragLink = null;  // live drag from an output port: {from, x1, y1, x2, y2}
   var profiles = [];    // host profiles ("bots") offered to agent nodes
   var models = [];      // host model catalog: [{slug, label, models}]
+  // Slug of the host's active provider ("" when unknown): only its models can
+  // actually run, so the picker offers those. Set alongside the catalog.
+  var currentProvider = "";
   var channels = [];    // host channel directory: [{id, label, kind, platform}]
   var lastRunId = "";   // the run the resume box answers
   var lastStatus = "";  // that run's last seen status: only a failed one is retryable
@@ -1078,14 +1081,20 @@
   }
 
   /** The host catalog as a grouped <select>: one optgroup per provider, because a step names
-   *  exactly one model and the runtime derives its provider. With no catalog the field stays
-   *  typeable, and a saved model the catalog dropped stays selectable. */
+   *  exactly one model and the runtime derives its provider. Only the active provider's
+   *  models are offered — anything else would fail loudly server-side. With no catalog,
+   *  or an unknown active provider, the field stays typeable (fail open, never empty),
+   *  and a saved model the catalog dropped stays selectable. */
   function modelSelect(current) {
     if (!models.length) {
       return textInput(current.model || "", function (v) {
         if (v) { current.model = v; } else { delete current.model; }
       }, "model id (optional)");
     }
+    var offered = currentProvider
+      ? models.filter(function (p) { return p.slug === currentProvider; })
+      : models;
+    if (!offered.length) { offered = models; }
     var select = document.createElement("select");
     select.title = TIPS["agent.model"];
     var blank = document.createElement("option");
@@ -1094,7 +1103,7 @@
     blank.title = TIPS["agent.model"];
     select.appendChild(blank);
     var known = false;
-    models.forEach(function (p) {
+    offered.forEach(function (p) {
       var group = document.createElement("optgroup");
       group.label = p.label || p.slug;
       (p.models || []).forEach(function (id) {
@@ -1144,11 +1153,12 @@
       .then(function (res) { return res.ok ? res.json() : null; })
       .then(function (data) {
         models = (data && data.providers) || [];
+        currentProvider = (data && data.current && data.current["provider"]) || "";
         // A late catalog response must not wipe a control the user is typing in.
         var insp = document.getElementById("inspector");
         if (!insp || !insp.contains(document.activeElement)) { buildInspector(); }
       })
-      .catch(function () { models = []; });
+      .catch(function () { models = []; currentProvider = ""; });
   }
 
   /** The friendly scheduler: a preset picker, the time or day it needs, and the cron it

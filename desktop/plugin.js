@@ -481,6 +481,9 @@ function createDesigner(host, call) {
   let dragLink = null;  // live drag from an output port: {from, x1, y1, x2, y2}
   let profiles = [];    // host profiles ("bots") offered to agent nodes
   let models = [];      // host model catalog: [{slug, label, models}]
+  // Slug of the host's active provider ("" when unknown): only its models can
+  // actually run, so the picker offers those. Set alongside the catalog.
+  let currentProvider = "";
   let channels = [];    // delivery targets ("chats") offered to output nodes
   let lastRun = null;
   let savedNames = [];  // names known to exist server-side; Run refuses a draft instead of 404ing
@@ -1004,8 +1007,10 @@ function createDesigner(host, call) {
   }
 
   /** The host catalog as a grouped <select>: one optgroup per provider, because a step names
-   *  exactly one model and the runtime derives its provider. With no catalog the field stays
-   *  typeable, and a saved model the catalog dropped stays selectable. */
+   *  exactly one model and the runtime derives its provider. Only the active provider's
+   *  models are offered — anything else would fail loudly server-side. With no catalog,
+   *  or an unknown active provider, the field stays typeable (fail open, never empty),
+   *  and a saved model the catalog dropped stays selectable. */
   function modelSelect(current) {
     if (!models.length) {
       return textInput(current.model || "", (v) => {
@@ -1013,6 +1018,10 @@ function createDesigner(host, call) {
         else delete current.model;
       }, "model id (optional)");
     }
+    const offered = currentProvider
+      ? models.filter((p) => p.slug === currentProvider)
+      : models;
+    const listed = offered.length ? offered : models;
     const select = document.createElement("select");
     select.title = TIPS["agent.model"];
     const blank = document.createElement("option");
@@ -1021,7 +1030,7 @@ function createDesigner(host, call) {
     blank.title = TIPS["agent.model"];
     select.appendChild(blank);
     let known = false;
-    models.forEach((p) => {
+    listed.forEach((p) => {
       const group = document.createElement("optgroup");
       group.label = p.label || p.slug;
       (p.models || []).forEach((id) => {
@@ -1569,9 +1578,11 @@ function createDesigner(host, call) {
   function refreshModels() {
     return call("/models").then((data) => {
       models = (data && data.providers) || [];
+      currentProvider = (data && data.current && data.current["provider"]) || "";
       refreshInspector();
     }).catch(() => {
       models = [];
+      currentProvider = "";
     });
   }
 

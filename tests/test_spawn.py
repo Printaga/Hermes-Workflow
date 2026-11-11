@@ -15,23 +15,27 @@ from visual_workflow_hermes.spawn import _make_spawn, llm_spawn
 class _Llm:
     """Fake ``PluginLlm`` recording kwargs; returns canned text/parsed results."""
 
-    def __init__(self, *, text: str = "AGENT OUTPUT", parsed=None, raises: Exception | None = None):
+    def __init__(self, *, text: str = "AGENT OUTPUT", parsed=None, raises: Exception | None = None,
+                 provider: str | None = None, model: str | None = None):
         self.calls: list[tuple[str, dict]] = []
         self.text = text
         self.parsed = parsed
         self.raises = raises
+        self.provider = provider
+        self.model = model
 
     def complete(self, **kwargs):
         self.calls.append(("complete", kwargs))
         if self.raises:
             raise self.raises
-        return types.SimpleNamespace(text=self.text)
+        return types.SimpleNamespace(text=self.text, provider=self.provider, model=self.model)
 
     def complete_structured(self, **kwargs):
         self.calls.append(("structured", kwargs))
         if self.raises:
             raise self.raises
-        return types.SimpleNamespace(text=self.text, parsed=self.parsed)
+        return types.SimpleNamespace(text=self.text, parsed=self.parsed, provider=self.provider,
+                                     model=self.model)
 
 
 def test_spawn_sends_the_prompt_and_returns_the_text():
@@ -173,4 +177,57 @@ def test_llm_spawn_accepts_an_injected_facade():
     fake = _Llm()
     spawn = llm_spawn(fake)
     out = spawn({"id": "w", "kind": "agent", "prompt": "p"}, {})
+    assert out == {"output": "AGENT OUTPUT"}
+
+
+# ------------------------------------------------- routed-provider mismatch
+# The host resolves the provider itself from a model-only override; when the pick
+# is not served by the resolved route the call still succeeds — on the wrong model.
+# The spawn fails the step loudly instead of recording wrong-model output. The fake
+# catalog pins one model to one provider so the tests never touch the host catalog.
+
+
+def _catalog(monkeypatch, mapping: dict):
+    import visual_workflow_hermes.models as models
+
+    def fake_provider_for_model(wanted: str, catalog=None) -> str:
+        return mapping.get((wanted or "").strip(), "")
+
+    monkeypatch.setattr(models, "provider_for_model", fake_provider_for_model)
+
+
+def test_spawn_fails_loudly_when_the_host_runs_another_provider(monkeypatch):
+    _catalog(monkeypatch, {"deepseek-v4.1-flash": "deepseek"})
+    llm = _Llm(provider="llama")
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "model": "deepseek-v4.1-flash",
+                            "prompt": "p"}, {})
+    assert out["error_kind"] == "wrong provider", out
+    assert "deepseek-v4.1-flash" in out["error"] and "llama" in out["error"]
+    assert "Switch the host's active provider" in out["error_hint"], out
+    assert "output" not in out
+
+
+def test_spawn_accepts_the_step_when_the_routed_provider_matches(monkeypatch):
+    _catalog(monkeypatch, {"deepseek-v4.1-flash": "deepseek"})
+    llm = _Llm(provider="deepseek")
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "model": "deepseek-v4.1-flash",
+                            "prompt": "p"}, {})
+    assert out == {"output": "AGENT OUTPUT"}
+
+
+def test_spawn_accepts_the_same_model_under_an_aliased_provider(monkeypatch):
+    # Local routes can be reported as "llama" while the catalog lists them as "custom":
+    # the canonical model id agreeing with the pick means the right weights ran.
+    _catalog(monkeypatch, {"mytiel": "custom"})
+    llm = _Llm(provider="llama", model="mytiel")
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "model": "mytiel",
+                            "prompt": "p"}, {})
+    assert out == {"output": "AGENT OUTPUT"}
+
+
+def test_spawn_stays_fail_open_when_the_pick_is_uncatalogued(monkeypatch):
+    _catalog(monkeypatch, {})
+    llm = _Llm(provider="llama")
+    out = _make_spawn(llm)({"id": "w", "kind": "agent", "model": "some-future-model",
+                            "prompt": "p"}, {})
     assert out == {"output": "AGENT OUTPUT"}

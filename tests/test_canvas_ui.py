@@ -150,6 +150,18 @@ MODELS_CALL = {
 }
 
 
+def test_the_model_picker_only_offers_the_active_providers_models(canvas):
+    name, source = canvas
+    body = body_of(source, "modelSelect")
+    # The runtime derives the provider from the pick and now fails a step whose model
+    # is not served by the routed provider — so offering other providers' models is
+    # offering guaranteed failures. Unknown active provider falls back to the full
+    # catalog, never an empty picker.
+    assert "currentProvider" in body, f"{name} model picker ignores the active provider"
+    assert ".filter(" in body, f"{name} model picker stores the provider but never filters"
+    assert "currentProvider" in source, f"{name} never stores the active provider"
+
+
 def test_the_model_picker_is_a_select_over_the_host_catalog(canvas):
     name, source = canvas
     assert MODELS_CALL[name] in source, f"{name} never requests the host model catalog"

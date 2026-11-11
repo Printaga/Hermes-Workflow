@@ -94,6 +94,47 @@ def llm_spawn(llm: Any = None, plugin_id: str = PLUGIN_ID) -> Optional[Callable[
     return _make_spawn(llm)
 
 
+def _check_routed_provider(requested: str | None, result: Any) -> dict | None:
+    """Fail loudly when the host ran the step on the wrong provider; else None.
+
+    The plugin may only request a ``model`` (never ``provider`` — the trust gate
+    forbids it), and the host resolves the provider itself. When the pick is not
+    served by the resolved route the call still succeeds, on the wrong model, with
+    nothing raising anywhere — so the check happens here, against the result's own
+    attribution. ``provider_for_model`` returning \"\" (unknown id, unreadable catalog)
+    and a result carrying no attribution are both unjudgeable and stay fail-open.
+    """
+    if not requested:
+        return None
+    try:
+        from .models import provider_for_model
+        expected = provider_for_model(requested)
+    except Exception:
+        return None
+    if not expected:
+        return None
+    actual = getattr(result, "provider", None)
+    if not actual or not str(actual).strip():
+        return None
+    if str(actual).strip().lower() == expected.strip().lower():
+        return None
+    # Same weights under two spellings (a local route reported as "llama" while the
+    # catalog lists it as "custom", or vice versa): the canonical model id the host
+    # reports back is the tiebreaker — only fail when neither agrees with the pick.
+    actual_model = getattr(result, "model", None)
+    if (requested.strip().lower() and actual_model
+            and str(actual_model).strip().lower() == requested.strip().lower()):
+        return None
+    advice = (f"switch the host's active provider to {expected!r} "
+              f"or clear the step's Model field")
+    return {
+        "error": f"wrong provider: step asked for model {requested!r} (served by "
+                 f"{expected!r}) but the host ran it on {str(actual).strip()!r} — {advice}.",
+        "error_kind": "wrong provider",
+        "error_hint": advice[0].upper() + advice[1:] + ".",
+    }
+
+
 def _make_spawn(llm: Any) -> Callable[..., dict]:
     def spawn(step: dict, outputs: dict, run: Optional[dict] = None) -> dict:
         # Imports stay inside the spawn so importing this module stays dependency-free.
@@ -125,8 +166,14 @@ def _make_spawn(llm: Any) -> Callable[..., dict]:
                     **overrides,
                 )
                 structured = result.parsed if isinstance(result.parsed, dict) else None
+                mismatch = _check_routed_provider(model, result)
+                if mismatch:
+                    return mismatch
                 return {"output": result.text or "", "structured": structured}
             result = llm.complete(messages=[{"role": "user", "content": content}], **overrides)
+            mismatch = _check_routed_provider(model, result)
+            if mismatch:
+                return mismatch
             return {"output": result.text or ""}
         except StepError:
             raise

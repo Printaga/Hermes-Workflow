@@ -19,6 +19,8 @@ from an output port to another node to add an edge, click an edge and press Dele
 * exactly one `trigger` per design; `trigger_mode` is `manual` or `schedule`
 * `agent` needs `prompt`; optional `profile` (a host bot), `model` (overrides the bot's model;
   there is no `provider` field — the runtime derives it from the host model catalog), and
+  the pick must be served by the host's active provider (the picker lists those; any
+  other pick fails the step instead of running the wrong model), and
   `retries` (0–3, default 0 — extra attempts when the bot call fails; only agent steps
   retry, because re-asking a human gate is not a retry and a condition is deterministic)
 * `condition` needs `expression` of the form `out.<node>.<field> <op> <value>`

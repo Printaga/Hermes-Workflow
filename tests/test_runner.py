@@ -108,6 +108,19 @@ def test_other_kinds_get_no_nap_and_no_extra_attempt(monkeypatch):
     assert naps == [], "an auth problem is not fixed by waiting"
 
 
+def test_a_wrong_provider_fails_without_burning_retries(monkeypatch):
+    plan = _plan({"id": "a", "kind": "agent", "after": [], "prompt": "p", "retries": 2})
+    naps = []
+    monkeypatch.setattr(runner.time, "sleep", lambda s: naps.append(s))
+    state = run_plan(
+        plan, new_state(plan, "wp1"),
+        spawn=lambda s, o, st: {"error": "wrong provider: ran on 'llama', not 'deepseek'",
+                                "error_kind": "wrong provider"})
+    assert state["status"] == "failed"
+    assert state["attempts"] == {"a": 1}, "a config error cannot clear on retry"
+    assert naps == []
+
+
 def test_a_rate_limited_retry_inside_the_budget_backs_off_first(monkeypatch):
     """A step that budgeted retries still naps before one: an instant retry after a 429
     just re-hits the cap, so the backoff applies to every rate-limited retry, not only the

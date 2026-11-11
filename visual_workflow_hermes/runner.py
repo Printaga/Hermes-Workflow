@@ -183,6 +183,8 @@ def _spawn_with_retries(spawn, step: dict, state: dict) -> dict:
                 raise err
             return produced
         except StepError as exc:
+            if getattr(exc, "kind", None) == "wrong provider":
+                raise  # a config error, not a flaky call: retrying would re-run the wrong model
             rate_limited = getattr(exc, "kind", None) == "rate limited"
             if rate_limited and attempts <= budget:
                 # Inside the budget: same policy, the provider asked to slow down, so an
