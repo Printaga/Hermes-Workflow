@@ -23,7 +23,10 @@ from an output port to another node to add an edge, click an edge and press Dele
   other pick fails the step instead of running the wrong model), and
   `retries` (0–3, default 0 — extra attempts when the bot call fails; only agent steps
   retry, because re-asking a human gate is not a retry and a condition is deterministic)
-* `condition` needs `expression` of the form `out.<node>.<field> <op> <value>`
+* `condition` needs `expression`: `out.<node>.<field> <op> <value>` with `<op>` one of
+  `== != > >= < <=` plus `contains` (substring, or membership in a list) and `startswith`;
+  `out.<node>.<field> is [not] empty` needs no value; an unquoted `out.<other>` on the right
+  compares two nodes' outputs (quote it to mean the literal text).
 * `approval` needs `question`; `options` is a list of acceptable answers. Optional
   `timeout_minutes` (1–4320) is a deadline and `on_timeout` is `reject` or `escalate`; once the
   deadline passes the run is `failed` with `approval timed out` and a late answer gets that

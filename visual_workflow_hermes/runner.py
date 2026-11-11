@@ -14,6 +14,14 @@ import time
 COMPARATORS = {"==": operator.eq, "!=": operator.ne, ">": operator.gt,
                ">=": operator.ge, "<": operator.lt, "<=": operator.le}
 _HEAD_RE = re.compile(r"^out\.(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$")
+# Word operators need whitespace boundaries (node ids may contain dots, never spaces
+# in an expression target): `out.n.text contains "x"`, never `out.n.textcontains"x"`.
+_WORDS_RE = re.compile(r"^out\.(.+?)\s+(contains|startswith)\s+(.+)$")
+# Unary emptiness: `out.n.items is empty`, `out.n.draft is not empty`.
+_EMPTY_RE = re.compile(r"^out\.(.+?)\s+is(\s+not)?\s+empty\s*$")
+# An unquoted right side shaped like a reference resolves to the other node's output;
+# a quoted one stays literal text, exactly like the number/text rule below.
+_REF_RE = re.compile(r"^out\.([A-Za-z0-9_.-]+)$")
 PAUSED = ("awaiting_approval", "awaiting_agent")
 # One upstream output is injected as one block; a long draft must not eat the agent's context.
 MAX_CONTEXT_CHARS = 4000
@@ -112,24 +120,78 @@ def _dig(obj, path: str):
     return cur
 
 
-def evaluate_condition(expression: str, outputs: dict, node_ids) -> bool:
-    """Evaluate one ``out.<node>.<path> <op> <value>`` expression against prior outputs.
+def _resolve_target(target: str, outputs: dict, node_ids, expression: str):
+    """An ``out.<node>[.<path>]`` target to its produced value.
 
-    Never uses ``eval``. An unresolvable target is a StepError (a design defect), not False.
+    Longest known node id prefix wins, so ids may contain dots. Anything
+    unresolvable is a StepError (a design defect), never a silent False.
     """
-    match = _HEAD_RE.match((expression or "").strip())
-    if not match:
-        raise StepError(f"unparseable condition expression: {expression!r}")
-    target, op, literal = match.groups()
-    # Longest known node id prefix wins, so ids may contain dots.
     node = next((n for n in sorted(node_ids, key=len, reverse=True)
                  if target == n or target.startswith(f"{n}.")), None)
     if node is None:
         raise StepError(f"condition references unknown node in {expression!r}")
     if node not in outputs:
         raise StepError(f"condition references node {node!r} that has not produced output")
-    left = outputs[node] if target == node else _dig(outputs[node], target[len(node) + 1:])
-    right = _coerce(literal)
+    if target == node:
+        return outputs[node]
+    return _dig(outputs[node], target[len(node) + 1:])
+
+
+def _resolve_right(literal: str, outputs: dict, node_ids, expression: str):
+    """A right side to its comparable value: quoted text stays literal, an unquoted
+    ``out.<node>[.<path>]`` naming a known node reads that node's output (comparing
+    two runs' outputs), anything else coerces to number/bool/text as written."""
+    raw = (literal or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
+        return raw[1:-1]
+    if _REF_RE.match(raw):
+        return _resolve_target(raw[len("out."):], outputs, node_ids, expression)
+    return _coerce(raw)
+
+
+def _is_empty(value) -> bool:
+    return value is None or value == "" or value == {} or value == []
+
+
+def evaluate_condition(expression: str, outputs: dict, node_ids) -> bool:
+    """Evaluate one condition expression against prior outputs.
+
+    ``out.<node>.<path> <op> <value>`` with ``op`` one of ``== != > >= < <=``
+    plus the word operators ``contains`` (substring, or membership in a list) and
+    ``startswith``; ``out.<node>.<path> is [not] empty`` needs no right side; and
+    an unquoted right side shaped like ``out.<other>`` compares two outputs.
+
+    Never uses ``eval``. An unresolvable target is a StepError (a design defect),
+    not False.
+    """
+    text = (expression or "").strip()
+    empty = _EMPTY_RE.match(text)
+    if empty:
+        left = _resolve_target(empty.group(1), outputs, node_ids, expression)
+        result = _is_empty(left)
+        return (not result) if empty.group(2) else result
+    match = _WORDS_RE.match(text) or _HEAD_RE.match(text)
+    if not match:
+        raise StepError(f"unparseable condition expression: {expression!r}")
+    target, op, literal = match.groups()
+    left = _resolve_target(target, outputs, node_ids, expression)
+    right = _resolve_right(literal, outputs, node_ids, expression)
+    if op in ("contains", "startswith"):
+        if not isinstance(left, str):
+            if op == "contains" and isinstance(left, (list, tuple)):
+                try:
+                    return right in left
+                except TypeError as exc:
+                    raise StepError(
+                        f"cannot check {left!r} contains {right!r} in {expression!r}: {exc}"
+                    ) from exc
+            raise StepError(
+                f"cannot check {left!r} {op} {right!r} in {expression!r}: "
+                f"the left side is {type(left).__name__}, not text"
+            )
+        if not isinstance(right, str):
+            right = str(right)
+        return right in left if op == "contains" else left.startswith(right)
     # An agent often answers with numbers as text ({"word_count": "25"}). When the author
     # wrote a number, compare the left side as a number too. When the author quoted the
     # literal, they asked for a string comparison and the text is left alone.

@@ -54,7 +54,7 @@ const TIPS = {
   "agent.profile": "Which bot runs the step; host default uses the bot you have active.",
   "agent.model": "Model override for this step only; empty keeps the bot's own model.",
     "agent.retries": "How many extra tries the step gets when the bot fails before the run gives up (0 to 3).",
-  "condition.expression": "A test like out.draft.word_count > 20 \u2014 start with out.<node>.<field>, then one of > >= < <= == !=.",
+  "condition.expression": "Pick the step, field, operator and value above — or type the test as out.<node>.<field> <op> <value>.",
   "approval.question": "The question the person sees; the run waits here until they answer.",
   "approval.context": "The material the person is deciding on, shown with the question when the run pauses.",
   "approval.options": "Answers offered as buttons, comma separated (e.g. ship, edit); empty means free text.",
@@ -1398,6 +1398,167 @@ function createDesigner(host, call) {
     return wrap;
   }
 
+  var COND_OPS = [
+    ["==", "is equal to"], ["!=", "is not equal to"],
+    [">", "is greater than"], [">=", "is at least"],
+    ["<", "is less than"], ["<=", "is at most"],
+    ["contains", "contains"], ["startswith", "starts with"],
+    ["is empty", "is empty"], ["is not empty", "is not empty"],
+  ];
+  // Node ids in guided mode: the Advanced toggle writes raw text instead.
+  var condRaw = {};
+
+  /** Split "node-id or node-id.dotted.path" on the longest upstream id, mirroring
+   *  the runner. Upstream-only: the backend rejects anything else, so the builder
+   *  never offers it. */
+  function splitTarget(target, upstream) {
+    var ids = (upstream || []).slice().sort(function (a, b) { return b.length - a.length; });
+    for (var i = 0; i < ids.length; i++) {
+      if (target === ids[i]) return { node: ids[i], field: "" };
+      if (target.indexOf(ids[i] + ".") === 0) {
+        return { node: ids[i], field: target.slice(ids[i].length + 1) };
+      }
+    }
+    return null;
+  }
+
+  /** An expression the guided builder understands, or null (raw text mode keeps it). */
+  function parseCondition(expr, upstream) {
+    var text = String(expr || "").trim();
+    var m = text.match(/^out\.(.+?)\s+is(\s+not)?\s+empty$/);
+    if (m) {
+      var s = splitTarget(m[1], upstream);
+      if (s) return { node: s.node, field: s.field, op: m[2] ? "is not empty" : "is empty", value: "" };
+      return null;
+    }
+    m = text.match(/^out\.(.+?)\s+(contains|startswith)\s+(.+)$/) ||
+        text.match(/^out\.(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
+    if (m) {
+      var s2 = splitTarget(m[1], upstream);
+      if (s2) return { node: s2.node, field: s2.field, op: m[2], value: m[3] };
+    }
+    return null;
+  }
+
+  function buildExpression(node, field, op, value) {
+    var lhs = "out." + node + (field ? "." + field : "");
+    if (op === "is empty" || op === "is not empty") return lhs + " " + op;
+    return lhs + " " + op + " " + value;
+  }
+
+  function describeCondition(node, field, op, value) {
+    var what = "output of " + node + (field ? " (" + field.split(".").join(" ") + ")" : "");
+    var phrases = {
+      "==": "is equal to", "!=": "is not equal to",
+      ">": "is greater than", ">=": "is at least",
+      "<": "is less than", "<=": "is at most",
+      "contains": "contains", "startswith": "starts with",
+      "is empty": "is empty", "is not empty": "is not empty",
+    };
+    var phrase = phrases[op] || op;
+    if (op === "is empty" || op === "is not empty") return "Continue when " + what + " " + phrase + ".";
+    return "Continue when " + what + " " + phrase + " " + value + ".";
+  }
+
+  /** The guided condition editor: upstream step, field path, operator, value, with a
+   *  plain-English preview. Anything it cannot parse stays a free-text field. */
+  function conditionBuilder(current) {
+    var box = document.createElement("div");
+    var upstream = (current.after || []).filter(function (id) { return !!id; });
+    var parsed = parseCondition(current.expression, upstream);
+    if (!parsed || condRaw[current.id] || !upstream.length) {
+      var area = textArea(current.expression || "", function (v) {
+        current.expression = v;
+        draw();
+      }, 3);
+      box.appendChild(field("expression", area, TIPS["condition.expression"]));
+      if (current.expression && !parsed) {
+        var kept = document.createElement("p");
+        kept.className = "vw-hint";
+        kept.textContent = "Kept as typed: the guided builder cannot parse this yet.";
+        box.appendChild(kept);
+      }
+      if (!upstream.length) {
+        var need = document.createElement("p");
+        need.className = "vw-hint";
+        need.textContent = "Connect this condition to a step first — a test needs an upstream output.";
+        box.appendChild(need);
+      }
+      return box;
+    }
+    var parts = { node: parsed.node, field: parsed.field, op: parsed.op, value: parsed.value };
+    function commit() {
+      current.expression = buildExpression(parts.node, parts.field, parts.op, parts.value);
+      delete condRaw[current.id];
+      draw();
+    }
+    var nodeSel = document.createElement("select");
+    nodeSel.title = TIPS["condition.expression"];
+    upstream.forEach(function (id) {
+      var opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = id;
+      if (id === parts.node) opt.selected = true;
+      nodeSel.appendChild(opt);
+    });
+    nodeSel.addEventListener("change", function () {
+      parts.node = nodeSel.value;
+      commit();
+      buildInspector();
+    });
+    box.appendChild(field("step", nodeSel, TIPS["condition.expression"]));
+    var preview = document.createElement("p");
+    preview.className = "vw-hint";
+    var echo = document.createElement("p");
+    echo.className = "vw-muted";
+    function refresh() {
+      preview.textContent = describeCondition(parts.node, parts.field, parts.op, parts.value);
+      echo.textContent = current.expression;
+    }
+    var fieldInput = textInput(parts.field, function (v) {
+      parts.field = v.trim();
+      commit();
+      refresh();
+    }, "field.path (optional)");
+    box.appendChild(field("field", fieldInput, TIPS["condition.expression"]));
+    var opSel = document.createElement("select");
+    opSel.title = TIPS["condition.expression"];
+    COND_OPS.forEach(function (pair) {
+      var opt = document.createElement("option");
+      opt.value = pair[0];
+      opt.textContent = pair[0] === pair[1] ? pair[0] : pair[0] + " \u2014 " + pair[1];
+      if (pair[0] === parts.op) opt.selected = true;
+      opSel.appendChild(opt);
+    });
+    opSel.addEventListener("change", function () {
+      parts.op = opSel.value;
+      commit();
+      buildInspector();
+    });
+    box.appendChild(field("test", opSel, TIPS["condition.expression"]));
+    if (parts.op !== "is empty" && parts.op !== "is not empty") {
+      var valueInput = textInput(parts.value, function (v) {
+        parts.value = v;
+        commit();
+        refresh();
+      }, '100, "ship", true');
+      box.appendChild(field("value", valueInput, TIPS["condition.expression"]));
+    }
+    refresh();
+    box.appendChild(preview);
+    box.appendChild(echo);
+    var adv = document.createElement("button");
+    adv.type = "button";
+    adv.className = "vw-pill";
+    adv.textContent = "advanced: edit as text";
+    adv.addEventListener("click", function () {
+      condRaw[current.id] = true;
+      buildInspector();
+    });
+    box.appendChild(adv);
+    return box;
+  }
+
   function buildInspector() {
     const box = el.inspector;
     box.textContent = "";
@@ -1487,14 +1648,7 @@ function createDesigner(host, call) {
         "0"
       ), TIPS["agent.retries"]));
     } else if (current.type === "condition") {
-      box.appendChild(field("expression", textInput(current.expression || "", (v) => {
-        current.expression = v;
-        draw();
-      }, "out.draft.word_count > 20"), TIPS["condition.expression"]));
-      const hint = document.createElement("p");
-      hint.className = "vw-hint";
-      hint.textContent = "Must start with out.<node>.<field> <op> <value>.";
-      box.appendChild(hint);
+      box.appendChild(conditionBuilder(current));
     } else if (current.type === "approval") {
       box.appendChild(field("question", textArea(current.question || "", (v) => {
         current.question = v;

@@ -338,3 +338,23 @@ def test_a_mounted_run_paints_excerpts_under_its_nodes(canvas):
         f"{name} inspector hides a node's full output")
     assert "lastFull[current.id]" in body_of(source, "buildInspector"), (
         f"{name} inspector never reads the mounted run")
+
+
+# --------------------------------------- guided condition builder
+def test_condition_builder_guides_steps_operators_and_preview(canvas):
+    name, source = canvas
+    # Upstream steps only (the backend rejects anything else), every operator with a
+    # plain-English label, a live preview, and raw-text fallback for the unparseable.
+    assert "COND_OPS" in source, f"{name} has no guided operator list"
+    for op in ["==", "!=", ">=", "contains", "startswith", "is empty", "is not empty"]:
+        assert '"%s"' % op in source, f"{name} operator list drops {op}"
+    assert "parseCondition" in source, f"{name} cannot read back an expression"
+    assert "buildExpression" in source, f"{name} cannot compose an expression"
+    assert "describeCondition" in source, f"{name} has no plain-English preview"
+    assert "Continue when " in source, f"{name} preview is not plain English"
+    assert "advanced: edit as text" in source, f"{name} has no raw-text escape hatch"
+    assert "conditionBuilder(" in source, f"{name} never opens the builder"
+    # Every exit from the builder must hand back its box: a bare `return` renders
+    # nothing and crashes appendChild on the caller (verified live, once).
+    assert "return;" not in body_of(source, "conditionBuilder"), (
+        f"{name} builder can return without its box")

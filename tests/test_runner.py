@@ -239,6 +239,48 @@ def test_condition_comparators_and_coercion():
     assert evaluate_condition("out.n.ok == true", outputs, ids) is True
 
 
+def test_condition_word_operators():
+    outputs = {"n": {"text": "the quick brown fox", "tags": ["a", "b"], "count": 7,
+                      "empty": "", "items": [], "nothing": None, "obj": {}}}
+    ids = {"n"}
+    assert evaluate_condition('out.n.text contains "quick"', outputs, ids) is True
+    assert evaluate_condition('out.n.text contains "slow"', outputs, ids) is False
+    assert evaluate_condition('out.n.text startswith "the quick"', outputs, ids) is True
+    assert evaluate_condition('out.n.text startswith "quick"', outputs, ids) is False
+    assert evaluate_condition("out.n.tags contains 'a'", outputs, ids) is True
+    assert evaluate_condition("out.n.tags contains 'z'", outputs, ids) is False
+    assert evaluate_condition("out.n.empty is empty", outputs, ids) is True
+    assert evaluate_condition("out.n.items is empty", outputs, ids) is True
+    assert evaluate_condition("out.n.nothing is empty", outputs, ids) is True
+    assert evaluate_condition("out.n.obj is empty", outputs, ids) is True
+    assert evaluate_condition("out.n.text is empty", outputs, ids) is False
+    assert evaluate_condition("out.n.text is not empty", outputs, ids) is True
+    assert evaluate_condition("out.n.empty is not empty", outputs, ids) is False
+
+
+def test_condition_word_operator_type_errors():
+    with pytest.raises(StepError, match="not text"):
+        evaluate_condition('out.n.count contains "7"', {"n": {"count": 7}}, {"n"})
+    with pytest.raises(StepError, match="not text"):
+        evaluate_condition('out.n.count startswith "7"', {"n": {"count": 7}}, {"n"})
+    with pytest.raises(StepError, match="unparseable"):
+        evaluate_condition("out.n.text contains", {"n": {"text": "x"}}, {"n"})
+
+
+def test_condition_compares_two_outputs():
+    outputs = {"a": {"score": 9}, "b": {"score": 7}, "w": {"verdict": "ship"}}
+    ids = {"a", "b", "w"}
+    assert evaluate_condition("out.a.score > out.b.score", outputs, ids) is True
+    assert evaluate_condition("out.a.score < out.b.score", outputs, ids) is False
+    assert evaluate_condition("out.a.score == out.a.score", outputs, ids) is True
+    # A quoted reference stays literal text, like any other quoted literal.
+    assert evaluate_condition("out.w.verdict == 'out.b.score'", outputs, ids) is False
+    with pytest.raises(StepError, match="unknown node"):
+        evaluate_condition("out.a.score > out.ghost.score", outputs, ids)
+    with pytest.raises(StepError, match="has not produced output"):
+        evaluate_condition("out.a.score > out.c.score", outputs, {"a", "b", "w", "c"})
+
+
 def test_condition_errors_are_step_errors_not_false():
     with pytest.raises(StepError, match="unknown node"):
         evaluate_condition("out.ghost.x > 1", {"n": {}}, {"n"})

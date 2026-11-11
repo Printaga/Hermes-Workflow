@@ -32,8 +32,11 @@ MAX_NODES = 50
 # Conditions must reference upstream outputs in this form:
 #   out.<node_id>.<dotted.path> <op> <literal>
 # e.g. "out.draft.word_count > 20". Heads other than `out.` are rejected so a broken
-# expression fails at design time rather than mid-run.
+# expression fails at design time rather than mid-run. Word operators need whitespace
+# around them (`contains`, `startswith`); emptiness is unary (`is [not] empty`).
 _WHEN_RE = re.compile(r"^out\.[A-Za-z0-9_.-]+\s*(==|!=|>=|<=|>|<)\s*.+$")
+_WORDS_RE = re.compile(r"^out\.[A-Za-z0-9_.-]+\s+(contains|startswith)\s+.+$")
+_EMPTY_RE = re.compile(r"^out\.[A-Za-z0-9_.-]+\s+is(\s+not)?\s+empty$")
 
 def _whole_number(value):
     """*value* as an int when it is genuinely whole, else None.
@@ -189,15 +192,19 @@ def validate_designer_graph(graph: dict) -> list[dict]:
                                "msg": f"on_timeout must be one of {ON_TIMEOUT} or empty"})
         if kind == "condition" and n.get("expression"):
             expression = str(n["expression"]).strip()
-            if not _WHEN_RE.match(expression):
+            if not (_WHEN_RE.match(expression) or _WORDS_RE.match(expression)
+                    or _EMPTY_RE.match(expression)):
                 errors.append({"node": nid, "field": "expression",
                                "msg": "expression must look like 'out.<node>.<field> <op> "
-                                      "<value>' (op: == != > >= < <=)"})
+                                      "<value>' (op: == != > >= < <= contains startswith), "
+                                      "'out.<node>.<field> is [not] empty'"})
             else:
                 # The expression names an upstream output. A typo is a design defect that
                 # would otherwise only surface mid-run; ids may contain dots, so match the
-                # longest known id (the runner resolves refs the same way).
-                target = re.split(r"\s*(?:>=|<=|==|!=|>|<)\s*", expression[4:], maxsplit=1)[0]
+                # longest known id (the runner resolves refs the same way). The split
+                # strips symbolic ops, word operators, and the unary emptiness tail.
+                target = re.split(r"\s*(?:>=|<=|==|!=|>|<)\s*|\s+(?:contains|startswith)\s+"
+                                  r"|\s+is(?:\s+not)?\s+empty$", expression[4:], maxsplit=1)[0]
                 ref = next((i for i in sorted(ids, key=len, reverse=True)
                             if target == i or target.startswith(f"{i}.")), None)
                 if ref is None:

@@ -79,6 +79,24 @@ def test_rejects_bad_expression_self_ref_and_cycle():
     assert any("cycle" in e["msg"] for e in validate_designer_graph(cycle))
 
 
+def test_accepts_word_operators_emptiness_and_output_refs():
+    ok = {"name": "ok", "nodes": [
+        {"id": "t", "type": "trigger", "trigger_mode": "manual", "after": []},
+        {"id": "a", "type": "agent", "prompt": "x", "after": ["t"]},
+        {"id": "b", "type": "agent", "prompt": "y", "after": ["t"]},
+        {"id": "c1", "type": "condition", "expression": "out.a.text contains \"quick\"",
+         "after": ["a"]},
+        {"id": "c2", "type": "condition", "expression": "out.a.text startswith 'the'",
+         "after": ["a"]},
+        {"id": "c3", "type": "condition", "expression": "out.a.items is empty", "after": ["a"]},
+        {"id": "c4", "type": "condition", "expression": "out.a.draft is not empty",
+         "after": ["a"]},
+        {"id": "c5", "type": "condition", "expression": "out.a.score > out.b.score",
+         "after": ["a", "b"]},
+    ]}
+    assert validate_designer_graph(ok) == []
+
+
 def test_a_note_is_legal_and_changes_nothing_else():
     """Sticky notes are annotations: they validate, but they are not workflow steps."""
     graph = {"name": "n", "nodes": [
