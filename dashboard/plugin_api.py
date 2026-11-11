@@ -207,6 +207,29 @@ def get_design(name: str) -> dict:
     return {"name": name, "graph": _load_design(name)}
 
 
+@router.delete("/designs/{name}")
+def delete_design(name: str) -> dict:
+    """Delete a saved design. Refused while a schedule replays it.
+
+    A cron job holds the design's name, not its content: deleting underneath it
+    would turn every future fire into a "design not found" error, so the schedule
+    goes first (Schedules view), then the design.
+    """
+    for job in list_workflow_jobs().get("jobs", []):
+        if isinstance(job, dict) and job.get("design") == name:
+            raise HTTPException(
+                status_code=409,
+                detail=f"design {name!r} still has a schedule: remove it first",
+            )
+    try:
+        _designs().delete(name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:  # malformed name
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "name": name}
+
+
 @router.post("/designs/{name}")
 def save_design(name: str, payload: dict = Body(...)) -> dict:
     """Validate and store a designer graph under ``name``.
@@ -354,6 +377,18 @@ def get_run(run_id: str) -> dict:
     """One stored run in the same shape a run/respond call returns (for reopening a run)."""
     runs = _runs()
     return _result(_settled(_load_run(run_id), runs))
+
+
+@router.delete("/runs/{run_id}")
+def delete_run(run_id: str) -> dict:
+    """Delete a stored run. Paused gates go with it — answer or retry first."""
+    try:
+        _runs().delete(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:  # malformed id
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "run_id": run_id}
 
 
 @router.post("/runs/{run_id}/respond")

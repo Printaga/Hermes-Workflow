@@ -41,6 +41,10 @@ REQUIRED_ROUTES = {
     # Runs view: every run on disk (not just the one this tab started), and one run's detail.
     ("/runs", "get"),
     ("/runs/{run_id}", "get"),
+    # Deletion, human paths only (no model-callable delete tool): one saved design
+    # (refused while a schedule replays it) and one stored run.
+    ("/designs/{name}", "delete"),
+    ("/runs/{run_id}", "delete"),
     # "New from template": the built-in designs shipped in examples/.
     ("/designs/templates", "get"),
     # Schedules view: the delivery-target picker and the cron jobs this plugin created.
@@ -219,6 +223,40 @@ def test_a_design_literally_named_templates_is_not_shadowed(tmp_path, monkeypatc
     _save_gate_design(client, name="templates")
     body = client.get("/api/plugins/visual-workflow/designs/templates").json()
     assert "templates" in body and "graph" not in body
+
+
+def test_delete_design_roundtrip_and_unknown_is_404(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path, monkeypatch)
+    _save_gate_design(client, name="bye")
+    body = client.delete("/api/plugins/visual-workflow/designs/bye").json()
+    assert body == {"ok": True, "name": "bye"}
+    assert client.get("/api/plugins/visual-workflow/designs").json()["designs"] == []
+    assert client.delete("/api/plugins/visual-workflow/designs/bye").status_code == 404
+    assert client.delete("/api/plugins/visual-workflow/designs/Bad Name!").status_code == 400
+
+
+def test_delete_design_refused_while_a_schedule_replays_it(tmp_path, monkeypatch):
+    client, mod = _client(tmp_path, monkeypatch)
+    _save_gate_design(client, name="sched")
+    monkeypatch.setattr(
+        mod, "list_workflow_jobs",
+        lambda: {"jobs": [{"job_id": "j1", "name": "workflow:sched", "design": "sched"}],
+                 "available": True},
+    )
+    response = client.delete("/api/plugins/visual-workflow/designs/sched")
+    assert response.status_code == 409
+    assert "sched" in client.get("/api/plugins/visual-workflow/designs").json()["designs"]
+
+
+def test_delete_run_roundtrip_and_unknown_is_404(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path, monkeypatch)
+    _save_gate_design(client)
+    started = client.post("/api/plugins/visual-workflow/designs/gated/run").json()
+    run_id = started["run_id"]
+    body = client.delete(f"/api/plugins/visual-workflow/runs/{run_id}").json()
+    assert body == {"ok": True, "run_id": run_id}
+    assert client.delete(f"/api/plugins/visual-workflow/runs/{run_id}").status_code == 404
+    assert client.delete("/api/plugins/visual-workflow/runs/nope!").status_code == 400
 
 
 def test_profiles_endpoint_answers_even_without_a_host_registry(tmp_path, monkeypatch):

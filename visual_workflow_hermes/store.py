@@ -78,6 +78,13 @@ class DesignStore:
     def list_designs(self) -> list[str]:
         return sorted(p.stem for p in self.root.glob("*.json"))
 
+    def delete(self, name: str) -> None:
+        path = self._path(name)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"no saved workflow named {name!r}") from None
+
 
 _RUN_ID_RE = re.compile(r"^[a-f0-9]{6,32}$")
 
@@ -119,6 +126,13 @@ class RunStore:
 
     def list_runs(self) -> list[str]:
         return sorted(p.stem for p in self.root.glob("*.json"))
+
+    def delete(self, run_id: str) -> None:
+        path = self._path(run_id)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"no run {run_id!r}") from None
 
     def recent(self, limit: int = 20) -> list[dict]:
         """Newest-first runs: ``[{run_id, updated, state}]``; unreadable files are skipped.

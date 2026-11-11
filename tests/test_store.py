@@ -60,6 +60,36 @@ def test_a_non_string_run_id_is_a_value_error_too(tmp_path):
         runs.save({"run_id": 123})
 
 
+def test_delete_removes_a_saved_design(tmp_path):
+    s = DesignStore(root=tmp_path)
+    s.save("demo", _graph())
+    s.delete("demo")
+    assert not (tmp_path / "demo.json").exists()
+    with pytest.raises(FileNotFoundError):
+        s.load("demo")
+
+
+def test_delete_refuses_unknown_designs_and_bad_names(tmp_path):
+    s = DesignStore(root=tmp_path)
+    with pytest.raises(FileNotFoundError):
+        s.delete("ghost")
+    with pytest.raises(ValueError):
+        s.delete("../escape")
+
+
+def test_delete_removes_a_stored_run(tmp_path):
+    from visual_workflow_hermes.store import RunStore
+
+    runs = RunStore(root=tmp_path)
+    runs.save({"run_id": "abcdef123456", "status": "done"})
+    runs.delete("abcdef123456")
+    assert not (tmp_path / "abcdef123456.json").exists()
+    with pytest.raises(FileNotFoundError):
+        runs.delete("abcdef123456")
+    with pytest.raises(ValueError):
+        runs.delete("nope!")
+
+
 def test_list_designs_sorted(tmp_path):
     s = DesignStore(root=tmp_path)
     s.save("b-one", _graph("b"))
