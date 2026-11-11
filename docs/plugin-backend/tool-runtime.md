@@ -36,7 +36,7 @@ turn; a malformed command returns the usage text.
 | `workflow_design_load` | `tool_load` | `{ok, graph?}` or `{ok: false, error}` |
 | `workflow_design_validate` | `tool_validate` | `{ok, errors}` |
 | `workflow_design_run` | `tool_run` | run result, or `{ok: false, errors?/error}` |
-| `workflow_design_respond` | `tool_respond` | run result or `{ok: false, error}` |
+| `workflow_design_respond` | `tool_respond` | run result or `{ok: false, error}` — approval gates are always refused here |
 
 The result shape for a started run is the shared `_result`:
 
@@ -78,8 +78,11 @@ Every store, plan, and persistence failure is translated, never raised into the 
   around plan building, the first save, and execution. The `KeyError`/`TypeError` entries are for
   corrupt on-disk state, not for programming errors in the happy path.
 - `_tool_run_retry` checks `retryable` first and reports the refusal as a sentence.
-- `tool_respond` refuses a non-object `pending` record and a mismatched `node_id` before
-  attempting to resume.
+- `tool_run` stamps `approved_targets` (the design's delivering set) into the run record at
+every human-attended start, including retries.
+- `tool_respond` refuses a non-object `pending` record, a mismatched `node_id`, any gate
+  whose run record says `awaiting_approval`, and any resume whose current delivering set is
+  not a subset of the stamp — all before attempting to resume.
 
 `tool_respond` prefers `structured` over `answer` when both are present, so a JSON result can be
 used by downstream conditions while the text remains for display.
@@ -112,7 +115,8 @@ web route.
 ## Tests
 
 `tests/test_commands.py` covers the slash command grammar and rendering; `tests/test_runner.py`
-covers the run/respond/retry handlers end to end with an injected store and spawn; 
+covers the run/respond/retry handlers end to end with an injected store and spawn;
+`tests/test_hooks.py` covers the `pre_tool_call` escalation and its silent pass-through;
 `tests/test_store.py` covers the error contract the handlers rely on.
 
 ## Related documentation

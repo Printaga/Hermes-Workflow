@@ -39,6 +39,8 @@ flowchart LR
 | GET | `/designs/templates` | built-in designs from `examples/` |
 | GET | `/designs/{name}` | one saved graph |
 | POST | `/designs/{name}` | validate and save `{graph}` |
+| DELETE | `/designs/{name}` | remove a saved design; refused with 409 while a schedule replays it |
+| GET | `/designs/{name}/fields` | field paths from recent *done* runs, for the condition builder |
 | POST | `/designs/{name}/validate` | validate a saved design or a draft `{graph}` |
 | POST | `/designs/{name}/run` | run now until done or paused |
 | GET | `/schedules` | cron jobs this plugin created |
@@ -48,6 +50,7 @@ flowchart LR
 | GET | `/runs/{run_id}` | one run in result shape |
 | POST | `/runs/{run_id}/respond` | answer a gate or supply agent output |
 | POST | `/runs/{run_id}/retry` | retry a failed run |
+| DELETE | `/runs/{run_id}` | remove a stored run |
 
 `/designs/templates` is declared before `/designs/{name}` on purpose: FastAPI matches routes in
 registration order, so the reverse order would treat "templates" as a design name.

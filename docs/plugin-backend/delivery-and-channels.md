@@ -4,7 +4,7 @@ The outbound half of an output node: turning a collected payload into a short me
 handing it to the host's own send seam, plus the read-only channel directory the canvas uses to
 offer valid targets.
 
-- Sources: `visual_workflow_hermes/delivery.py`, `visual_workflow_hermes/channels.py`
+- Sources: `visual_workflow_hermes/delivery.py`, `visual_workflow_hermes/channels.py`, `visual_workflow_hermes/hooks.py`
 - Delivery never opens a platform socket itself, and a failed delivery never fails the run.
 
 ## Two modules, one flow
@@ -72,6 +72,24 @@ Failure is data:
 `deliver_output` adds two pre-flight checks: a missing target and a `channel` target without `:`
 are refused with a specific sentence rather than being handed to the seam.
 
+## Model-initiated sends ask first
+
+The host keeps its send function away from the model, and two tool calls could otherwise walk
+around that: `workflow_design_save` storing a delivering design, then `workflow_design_run`
+sending through it. `hooks.py::on_pre_tool_call` closes the loop. It scans the design with
+`delivering_targets(design)` — a pure function returning every output node whose `deliver` is
+set — and only when that set is non-empty does it return the host's `approve` escalation
+naming each target. The text itself does not exist yet — it will be whatever the run's
+agent steps produce, and the prompt says so. Collect-only designs and unknown names return
+`None` (pass-through), so ordinary runs never see a prompt, and human paths (slash commands, the canvas
+routes) never pass through model-tool dispatch at all.
+
+The prompt alone is not the whole gate: `tool_run` stamps the run record with
+`approved_targets` at every human-attended start, and `tool_respond` refuses a resume whose
+design's current delivering set is not a subset of the stamp. Editing a saved design mid-run
+to add a target therefore cannot smuggle a send through the resume path — see
+[Tool Runtime](tool-runtime.md).
+
 ## Channel directory
 
 `list_delivery_targets(home=None)` reads the gateway's `channel_directory.json` (or the host's
@@ -110,4 +128,5 @@ without reading that receipt.
 - [Sequential Runner](sequential-runner.md) — records the receipts
 - [Host Catalogs](host-catalogs.md) — the same failure-tolerant pattern
 - [Schema Validation](schema-validation.md) — `deliver`/`target` rules
+- [Tool Runtime](tool-runtime.md) — the `approved_targets` stamp the gate relies on
 - [Canvas Inspector](../canvas-frontends/canvas-inspector.md) — the send-to picker

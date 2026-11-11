@@ -31,7 +31,7 @@ press **Run** or point a schedule at it.
 | `trigger` | `trigger_mode` (`manual`/`schedule`), `schedule` cron | Not a step: recorded in `plan["meta"]["trigger"]`. Exactly one per design. |
 | `agent` | `prompt` (required), `profile`, `model`, `schema`, `inputs`, `timeout`, `retries` | A step that runs an agent. `profile` picks a host bot; its model applies unless the node overrides it. `model` is chosen from the host catalog — there is no `provider` field, the runtime derives it from the model, so only models served by the host's active provider can run (the picker lists those; any other pick fails the step instead of running the wrong model). `retries` (0–3, default 0) re-runs the step when the bot fails, and `attempts` in the run state records how many tries it took. From chat the step runs through the host subagent lifecycle; from a canvas (dashboard/desktop) the web routes run it through the host's plugin LLM facade (`ctx.llm`), which needs no parent session — a model override there is trust-gated by `plugins.entries.visual-workflow.llm.allow_model_override`. With neither backend available it pauses as `awaiting_agent` with `pending.prompt`. |
 | `condition` | `expression` (required) — `out.<node>.<field> <op> <value>` (`== != > >= < <=`, plus `contains`/`startswith`; `is [not] empty` needs no value; unquoted `out.<other>` compares two outputs) | Evaluated locally against upstream outputs; a false gate skips its downstream subtree (reported in `skipped`). |
-| `approval` | `question` (required), `options`, `context`, `timeout_minutes`, `on_timeout` | Pauses the run as `awaiting_approval` until `workflow_design_respond` answers it. `timeout_minutes` (1–4320) is a deadline: once it passes the run fails with `approval timed out`, and a late answer gets that verdict instead of resuming. `on_timeout` is `reject` (default) or `escalate` (recorded as `detail: "escalation requested"`; real re-routing is Phase 2). |
+| `approval` | `question` (required), `options`, `context`, `timeout_minutes`, `on_timeout` | Pauses the run as `awaiting_approval` until a person answers it (`/workflow approve <run_id> <gate> <answer>` or the canvas approve control — `workflow_design_respond` refuses approval gates). `timeout_minutes` (1–4320) is a deadline: once it passes the run fails with `approval timed out`, and a late answer gets that verdict instead of resuming. `on_timeout` is `reject` (default) or `escalate` (recorded as `detail: "escalation requested"`; real re-routing is Phase 2). |
 | `output` | `send_to` (collect only, a home channel, or one chat) | Collects its parents' outputs under `outputs`, then optionally sends that text through the host send seam. A bare platform is its home channel (`telegram`); a chat is `<platform>:<chat id>` (`slack:#ops`). The canvas derives `deliver`/`target` from that one choice, so an invalid pair cannot be built. A failed send is recorded in `deliveries`, never fails the run. |
 
 Edges are `after: [<node-id>...]`: a node runs once all of its parents have run. Layout `x`/`y`
@@ -90,7 +90,7 @@ hermes plugins install <repo-url>
 # installs disabled by default — activate it:
 hermes plugins enable visual-workflow   # also resolves the plugin's Python deps
 
-hermes plugins list          # visual-workflow 1.0.0
+hermes plugins list          # visual-workflow 1.1.0
 hermes plugins validate .    # from the checkout: "Validation passed."
 hermes plugins doctor .      # import + registration OK, 5 tool(s), 1 hook(s)
 ```
@@ -178,8 +178,8 @@ The agent-facing tools mirror the verbs:
 | `workflow_design_save` | Validate and store a design. |
 | `workflow_design_load` | Load a stored design. |
 | `workflow_design_validate` | Validate without saving; returns `{node, field, msg}` defects. |
-| `workflow_design_run` | Run a design: `done`, `awaiting_approval`, `awaiting_agent`, or `failed`. With `retry: <run_id>` instead of `name`, it re-runs a failed run from the step that failed. |
-| `workflow_design_respond` | Resume a paused run with an approval answer or an agent output. |
+| `workflow_design_run` | Run a design: `done`, `awaiting_approval`, `awaiting_agent`, or `failed`. With `retry: <run_id>` instead of `name`, it re-runs a failed run from the step that failed. A model-started run whose design delivers to a chat first asks for human approval naming the target; denying blocks the run. |
+| `workflow_design_respond` | Resume a paused run that is waiting on an agent step: pass the step's output as `answer` (or `structured`). Approval gates are refused here — answer them with `/workflow approve` or the canvas. |
 
 ## Triggers
 

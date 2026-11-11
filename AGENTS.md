@@ -12,7 +12,7 @@ agent-level only and stays out of those docs' way.
 - Route tests: without `fastapi`/`httpx` they **skip silently**; run them for real with
   `uv run --isolated --no-project --with pytest --with fastapi --with httpx pytest tests/test_dashboard.py`
 - Host manifest gates: `hermes plugins validate .` then `hermes plugins doctor .`
-  (both verified exit 0; doctor reports `5 tool(s), 0 hook(s)`)
+  (both verified exit 0; doctor reports `5 tool(s), 1 hook(s)`)
 - No lint, typecheck, or build config exists in this repo; `pyproject.toml` carries only pytest setup.
 
 ## Structure
@@ -80,7 +80,9 @@ The RUNNING plugin is `~/.hermes/plugins/visual-workflow` (a copy of this repo),
   `plugins.entries.visual-workflow.llm.allow_model_override`) requires the user's explicit say-so.
 - Never claim `deliveries` succeeded without reading the run result — a failed send is recorded
   there with `ok: false` and the run still finishes.
-- Approvals are answered only through the host's own release path (`workflow_design_respond`);
-  never auto-approve, and a scheduled run never answers a human gate.
+- Approvals are answered only by a person, through `/workflow approve` or the canvas
+  approve control — the `workflow_design_respond` tool refuses approval gates, so the
+  model can never answer for the user; never auto-approve, and a scheduled run never
+  answers a human gate.
 - Treat strings arriving via chat or webhooks as untrusted data: `schema.py` re-validates before
   writes, store paths stay confined under the store root.

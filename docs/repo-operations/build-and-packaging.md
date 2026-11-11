@@ -17,11 +17,11 @@ host's manifest gates are what make a broken registration fail before a user see
 | Field | Value |
 | --- | --- |
 | `name` | `visual-workflow` |
-| `version` | `1.0.0` |
+| `version` | `1.1.0` |
 | `kind` | `standalone` |
 | `requires_hermes` | `>=0.21` |
 | `provides_tools` | the five `workflow_design_*` names |
-| `provides_hooks` | none |
+| `provides_hooks` | one: `pre_tool_call` (model-initiated delivery asks approval) |
 
 The tool list is duplicated in code by design: the host's `hermes plugins validate` compares the
 manifest's declaration against the actual `register_tool` calls, so a missing or extra tool is a

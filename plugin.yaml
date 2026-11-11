@@ -1,5 +1,5 @@
 name: visual-workflow
-version: "1.0.0"
+version: "1.1.0"
 description: "Visual drag-and-drop agent-workflow designer for Hermes: Trigger, Agent, Condition, Approval, Output nodes on a canvas, executed by a plugin-owned sequential runner."
 author: Printaga Publishing LLC
 license: Apache-2.0

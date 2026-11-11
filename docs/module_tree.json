@@ -1,158 +1,7 @@
 {
-  "plugin-backend": {
-    "path": "visual_workflow_hermes",
-    "components": [],
-    "children": {
-      "schema-validation": {
-        "path": "visual_workflow_hermes/schema.py",
-        "components": [
-          "visual_workflow_hermes/schema.py::_whole_number",
-          "visual_workflow_hermes/schema.py::validate_designer_graph"
-        ]
-      },
-      "design-and-run-store": {
-        "path": "visual_workflow_hermes/store.py",
-        "components": [
-          "visual_workflow_hermes/store.py::_hermes_home",
-          "visual_workflow_hermes/store.py::_write_json",
-          "visual_workflow_hermes/store.py::DesignStore",
-          "visual_workflow_hermes/store.py::DesignStore.__init__",
-          "visual_workflow_hermes/store.py::DesignStore._path",
-          "visual_workflow_hermes/store.py::DesignStore.save",
-          "visual_workflow_hermes/store.py::DesignStore.load",
-          "visual_workflow_hermes/store.py::DesignStore.list_designs",
-          "visual_workflow_hermes/store.py::RunStore",
-          "visual_workflow_hermes/store.py::RunStore.__init__",
-          "visual_workflow_hermes/store.py::RunStore._path",
-          "visual_workflow_hermes/store.py::RunStore.save",
-          "visual_workflow_hermes/store.py::RunStore.load",
-          "visual_workflow_hermes/store.py::RunStore.list_runs",
-          "visual_workflow_hermes/store.py::RunStore.recent"
-        ]
-      },
-      "run-plan-conversion": {
-        "path": "visual_workflow_hermes/convert.py",
-        "components": [
-          "visual_workflow_hermes/convert.py::topological_order",
-          "visual_workflow_hermes/convert.py::build_run_plan"
-        ]
-      },
-      "sequential-runner": {
-        "path": "visual_workflow_hermes/runner.py",
-        "components": [
-          "visual_workflow_hermes/runner.py::StepError",
-          "visual_workflow_hermes/runner.py::_as_text",
-          "visual_workflow_hermes/runner.py::_context_block",
-          "visual_workflow_hermes/runner.py::render_context",
-          "visual_workflow_hermes/runner.py::_coerce",
-          "visual_workflow_hermes/runner.py::_dig",
-          "visual_workflow_hermes/runner.py::evaluate_condition",
-          "visual_workflow_hermes/runner.py::_spawn_with_retries",
-          "visual_workflow_hermes/runner.py::run_plan",
-          "visual_workflow_hermes/runner.py::_deliver",
-          "visual_workflow_hermes/runner.py::check_timeouts",
-          "visual_workflow_hermes/runner.py::resume_plan",
-          "visual_workflow_hermes/runner.py::retryable",
-          "visual_workflow_hermes/runner.py::retry_failed",
-          "visual_workflow_hermes/runner.py::new_state"
-        ]
-      },
-      "agent-spawn": {
-        "path": "visual_workflow_hermes/spawn.py",
-        "components": [
-          "visual_workflow_hermes/spawn.py::diagnose_failure",
-          "visual_workflow_hermes/spawn.py::_explain",
-          "visual_workflow_hermes/spawn.py::llm_spawn",
-          "visual_workflow_hermes/spawn.py::_make_spawn"
-        ]
-      },
-      "host-catalogs": {
-        "path": "visual_workflow_hermes/profiles.py",
-        "components": [
-          "visual_workflow_hermes/profiles.py::list_host_profiles",
-          "visual_workflow_hermes/profiles.py::profile_choice",
-          "visual_workflow_hermes/profiles.py::step_model",
-          "visual_workflow_hermes/models.py::list_host_models",
-          "visual_workflow_hermes/models.py::clear_cache",
-          "visual_workflow_hermes/models.py::_read_catalog",
-          "visual_workflow_hermes/models.py::provider_for_model"
-        ]
-      },
-      "delivery-and-channels": {
-        "path": "visual_workflow_hermes/delivery.py",
-        "components": [
-          "visual_workflow_hermes/delivery.py::render_text",
-          "visual_workflow_hermes/delivery.py::send_text",
-          "visual_workflow_hermes/delivery.py::deliver_output",
-          "visual_workflow_hermes/channels.py::_home",
-          "visual_workflow_hermes/channels.py::_directory",
-          "visual_workflow_hermes/channels.py::list_delivery_targets",
-          "visual_workflow_hermes/channels.py::list_host_channels"
-        ]
-      },
-      "scheduling": {
-        "path": "visual_workflow_hermes/schedule.py",
-        "components": [
-          "visual_workflow_hermes/schedule.py::time_parts",
-          "visual_workflow_hermes/schedule.py::weekday_index",
-          "visual_workflow_hermes/schedule.py::build_cron",
-          "visual_workflow_hermes/schedule.py::_valid_field",
-          "visual_workflow_hermes/schedule.py::validate_cron",
-          "visual_workflow_hermes/schedule.py::describe_cron",
-          "visual_workflow_hermes/schedule.py::job_name",
-          "visual_workflow_hermes/schedule.py::design_of_job",
-          "visual_workflow_hermes/schedule.py::_cron",
-          "visual_workflow_hermes/schedule.py::_job_view",
-          "visual_workflow_hermes/schedule.py::list_workflow_jobs",
-          "visual_workflow_hermes/schedule.py::apply_action",
-          "visual_workflow_hermes/schedule.py::schedule_design",
-          "visual_workflow_hermes/triggers.py::_trigger",
-          "visual_workflow_hermes/triggers.py::schedule_plan"
-        ]
-      },
-      "tool-runtime": {
-        "path": "visual_workflow_hermes/runtime.py",
-        "components": [
-          "visual_workflow_hermes/runtime.py::_deliver",
-          "visual_workflow_hermes/runtime.py::_subagent_spawn",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.__init__",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._store",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._runs",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.handle_command",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._widget_hint",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_list",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_new",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_open",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_save",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_validate",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._describe",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_run",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_approve",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.tool_save",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.tool_load",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.tool_validate",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.tool_run",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._tool_run_retry",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.tool_respond",
-          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._result"
-        ]
-      },
-      "plugin-entry": {
-        "path": "visual_workflow_hermes/__init__.py",
-        "components": [
-          "visual_workflow_hermes/__init__.py::_as_json",
-          "visual_workflow_hermes/__init__.py::register"
-        ]
-      }
-    }
-  },
   "canvas-frontends": {
-    "path": "desktop",
-    "components": [],
     "children": {
       "canvas-core": {
-        "path": "desktop/plugin.js",
         "components": [
           "desktop/plugin.js::pad2",
           "desktop/plugin.js::timeParts",
@@ -196,57 +45,10 @@
           "desktop/plugin.js::finishLink",
           "desktop/plugin.js::cutEdge",
           "desktop/plugin.js::removeSelected"
-        ]
-      },
-      "canvas-inspector": {
-        "path": "desktop/plugin.js",
-        "components": [
-          "desktop/plugin.js::field",
-          "desktop/plugin.js::textInput",
-          "desktop/plugin.js::textArea",
-          "desktop/plugin.js::profileByName",
-          "desktop/plugin.js::profileSelect",
-          "desktop/plugin.js::modelSelect",
-          "desktop/plugin.js::applySendTo",
-          "desktop/plugin.js::sendToValue",
-          "desktop/plugin.js::sendToSelect",
-          "desktop/plugin.js::scheduleFields",
-          "desktop/plugin.js::buildInspector",
-          "desktop/plugin.js::refreshInspector",
-          "desktop/plugin.js::refreshProfiles",
-          "desktop/plugin.js::refreshModels",
-          "desktop/plugin.js::refreshChannels",
-          "desktop/plugin.js::note",
-          "desktop/plugin.js::banner",
-          "desktop/plugin.js::showErrors"
-        ]
-      },
-      "canvas-runs-schedules": {
-        "path": "desktop/plugin.js",
-        "components": [
-          "desktop/plugin.js::jobStatus",
-          "desktop/plugin.js::ageText",
-          "desktop/plugin.js::renderRuns",
-          "desktop/plugin.js::retryStoredRun",
-          "desktop/plugin.js::answerRun",
-          "desktop/plugin.js::openRun",
-          "desktop/plugin.js::runRow",
-          "desktop/plugin.js::scheduleAct",
-          "desktop/plugin.js::jobRow",
-          "desktop/plugin.js::scheduleForm",
-          "desktop/plugin.js::currentExpression",
-          "desktop/plugin.js::refreshReading",
-          "desktop/plugin.js::renderSchedules",
-          "desktop/plugin.js::renderRun",
-          "desktop/plugin.js::waitText",
-          "desktop/plugin.js::span",
-          "desktop/plugin.js::waitLine",
-          "desktop/plugin.js::deliveryLine",
-          "desktop/plugin.js::line"
-        ]
+        ],
+        "path": "desktop/plugin.js"
       },
       "canvas-design-lifecycle": {
-        "path": "desktop/plugin.js",
         "components": [
           "desktop/plugin.js::currentName",
           "desktop/plugin.js::payloadGraph",
@@ -272,10 +74,57 @@
           "desktop/plugin.js::createWorkflowsPage",
           "desktop/plugin.js::mount",
           "desktop/plugin.js::call"
-        ]
+        ],
+        "path": "desktop/plugin.js"
+      },
+      "canvas-inspector": {
+        "components": [
+          "desktop/plugin.js::field",
+          "desktop/plugin.js::textInput",
+          "desktop/plugin.js::textArea",
+          "desktop/plugin.js::profileByName",
+          "desktop/plugin.js::profileSelect",
+          "desktop/plugin.js::modelSelect",
+          "desktop/plugin.js::applySendTo",
+          "desktop/plugin.js::sendToValue",
+          "desktop/plugin.js::sendToSelect",
+          "desktop/plugin.js::scheduleFields",
+          "desktop/plugin.js::buildInspector",
+          "desktop/plugin.js::refreshInspector",
+          "desktop/plugin.js::refreshProfiles",
+          "desktop/plugin.js::refreshModels",
+          "desktop/plugin.js::refreshChannels",
+          "desktop/plugin.js::note",
+          "desktop/plugin.js::banner",
+          "desktop/plugin.js::showErrors"
+        ],
+        "path": "desktop/plugin.js"
+      },
+      "canvas-runs-schedules": {
+        "components": [
+          "desktop/plugin.js::jobStatus",
+          "desktop/plugin.js::ageText",
+          "desktop/plugin.js::renderRuns",
+          "desktop/plugin.js::retryStoredRun",
+          "desktop/plugin.js::answerRun",
+          "desktop/plugin.js::openRun",
+          "desktop/plugin.js::runRow",
+          "desktop/plugin.js::scheduleAct",
+          "desktop/plugin.js::jobRow",
+          "desktop/plugin.js::scheduleForm",
+          "desktop/plugin.js::currentExpression",
+          "desktop/plugin.js::refreshReading",
+          "desktop/plugin.js::renderSchedules",
+          "desktop/plugin.js::renderRun",
+          "desktop/plugin.js::waitText",
+          "desktop/plugin.js::span",
+          "desktop/plugin.js::waitLine",
+          "desktop/plugin.js::deliveryLine",
+          "desktop/plugin.js::line"
+        ],
+        "path": "desktop/plugin.js"
       },
       "dashboard-api": {
-        "path": "dashboard/plugin_api.py",
         "components": [
           "dashboard/plugin_api.py::_home",
           "dashboard/plugin_api.py::_designs",
@@ -300,17 +149,177 @@
           "dashboard/plugin_api.py::get_run",
           "dashboard/plugin_api.py::respond_run",
           "dashboard/plugin_api.py::retry_run",
-          "dashboard/plugin_api.py::_agent_step_output"
-        ]
+          "dashboard/plugin_api.py::_agent_step_output",
+          "dashboard/plugin_api.py::delete_design",
+          "dashboard/plugin_api.py::design_fields",
+          "dashboard/plugin_api.py::delete_run"
+        ],
+        "path": "dashboard/plugin_api.py"
       }
-    }
+    },
+    "components": [],
+    "path": "desktop"
+  },
+  "plugin-backend": {
+    "children": {
+      "agent-spawn": {
+        "components": [
+          "visual_workflow_hermes/spawn.py::diagnose_failure",
+          "visual_workflow_hermes/spawn.py::_explain",
+          "visual_workflow_hermes/spawn.py::llm_spawn",
+          "visual_workflow_hermes/spawn.py::_make_spawn"
+        ],
+        "path": "visual_workflow_hermes/spawn.py"
+      },
+      "delivery-and-channels": {
+        "components": [
+          "visual_workflow_hermes/delivery.py::render_text",
+          "visual_workflow_hermes/delivery.py::send_text",
+          "visual_workflow_hermes/delivery.py::deliver_output",
+          "visual_workflow_hermes/channels.py::_home",
+          "visual_workflow_hermes/channels.py::_directory",
+          "visual_workflow_hermes/channels.py::list_delivery_targets",
+          "visual_workflow_hermes/channels.py::list_host_channels",
+          "visual_workflow_hermes/hooks.py::_design_name_from_args",
+          "visual_workflow_hermes/hooks.py::_describe_target",
+          "visual_workflow_hermes/hooks.py::on_pre_tool_call",
+          "visual_workflow_hermes/delivery.py::delivering_targets"
+        ],
+        "path": "visual_workflow_hermes/delivery.py"
+      },
+      "design-and-run-store": {
+        "components": [
+          "visual_workflow_hermes/store.py::_hermes_home",
+          "visual_workflow_hermes/store.py::_write_json",
+          "visual_workflow_hermes/store.py::DesignStore",
+          "visual_workflow_hermes/store.py::DesignStore.__init__",
+          "visual_workflow_hermes/store.py::DesignStore._path",
+          "visual_workflow_hermes/store.py::DesignStore.save",
+          "visual_workflow_hermes/store.py::DesignStore.load",
+          "visual_workflow_hermes/store.py::DesignStore.list_designs",
+          "visual_workflow_hermes/store.py::RunStore",
+          "visual_workflow_hermes/store.py::RunStore.__init__",
+          "visual_workflow_hermes/store.py::RunStore._path",
+          "visual_workflow_hermes/store.py::RunStore.save",
+          "visual_workflow_hermes/store.py::RunStore.load",
+          "visual_workflow_hermes/store.py::RunStore.list_runs",
+          "visual_workflow_hermes/store.py::RunStore.recent",
+          "visual_workflow_hermes/store.py::DesignStore.delete",
+          "visual_workflow_hermes/store.py::RunStore._walk_paths",
+          "visual_workflow_hermes/store.py::RunStore.field_paths",
+          "visual_workflow_hermes/store.py::RunStore.delete"
+        ],
+        "path": "visual_workflow_hermes/store.py"
+      },
+      "host-catalogs": {
+        "components": [
+          "visual_workflow_hermes/profiles.py::list_host_profiles",
+          "visual_workflow_hermes/profiles.py::profile_choice",
+          "visual_workflow_hermes/profiles.py::step_model",
+          "visual_workflow_hermes/models.py::list_host_models",
+          "visual_workflow_hermes/models.py::clear_cache",
+          "visual_workflow_hermes/models.py::_read_catalog",
+          "visual_workflow_hermes/models.py::provider_for_model"
+        ],
+        "path": "visual_workflow_hermes/profiles.py"
+      },
+      "plugin-entry": {
+        "components": [
+          "visual_workflow_hermes/__init__.py::_as_json",
+          "visual_workflow_hermes/__init__.py::register"
+        ],
+        "path": "visual_workflow_hermes/__init__.py"
+      },
+      "run-plan-conversion": {
+        "components": [
+          "visual_workflow_hermes/convert.py::topological_order",
+          "visual_workflow_hermes/convert.py::build_run_plan"
+        ],
+        "path": "visual_workflow_hermes/convert.py"
+      },
+      "scheduling": {
+        "components": [
+          "visual_workflow_hermes/schedule.py::time_parts",
+          "visual_workflow_hermes/schedule.py::weekday_index",
+          "visual_workflow_hermes/schedule.py::build_cron",
+          "visual_workflow_hermes/schedule.py::_valid_field",
+          "visual_workflow_hermes/schedule.py::validate_cron",
+          "visual_workflow_hermes/schedule.py::describe_cron",
+          "visual_workflow_hermes/schedule.py::job_name",
+          "visual_workflow_hermes/schedule.py::design_of_job",
+          "visual_workflow_hermes/schedule.py::_cron",
+          "visual_workflow_hermes/schedule.py::_job_view",
+          "visual_workflow_hermes/schedule.py::list_workflow_jobs",
+          "visual_workflow_hermes/schedule.py::apply_action",
+          "visual_workflow_hermes/schedule.py::schedule_design",
+          "visual_workflow_hermes/triggers.py::_trigger",
+          "visual_workflow_hermes/triggers.py::schedule_plan"
+        ],
+        "path": "visual_workflow_hermes/schedule.py"
+      },
+      "schema-validation": {
+        "components": [
+          "visual_workflow_hermes/schema.py::_whole_number",
+          "visual_workflow_hermes/schema.py::validate_designer_graph"
+        ],
+        "path": "visual_workflow_hermes/schema.py"
+      },
+      "sequential-runner": {
+        "components": [
+          "visual_workflow_hermes/runner.py::StepError",
+          "visual_workflow_hermes/runner.py::_as_text",
+          "visual_workflow_hermes/runner.py::_context_block",
+          "visual_workflow_hermes/runner.py::render_context",
+          "visual_workflow_hermes/runner.py::_coerce",
+          "visual_workflow_hermes/runner.py::_dig",
+          "visual_workflow_hermes/runner.py::evaluate_condition",
+          "visual_workflow_hermes/runner.py::_spawn_with_retries",
+          "visual_workflow_hermes/runner.py::run_plan",
+          "visual_workflow_hermes/runner.py::_deliver",
+          "visual_workflow_hermes/runner.py::check_timeouts",
+          "visual_workflow_hermes/runner.py::resume_plan",
+          "visual_workflow_hermes/runner.py::retryable",
+          "visual_workflow_hermes/runner.py::retry_failed",
+          "visual_workflow_hermes/runner.py::new_state"
+        ],
+        "path": "visual_workflow_hermes/runner.py"
+      },
+      "tool-runtime": {
+        "components": [
+          "visual_workflow_hermes/runtime.py::_deliver",
+          "visual_workflow_hermes/runtime.py::_subagent_spawn",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.__init__",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._store",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._runs",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.handle_command",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._widget_hint",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_list",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_new",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_open",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_save",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_validate",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._describe",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_run",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._cmd_approve",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.tool_save",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.tool_load",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.tool_validate",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.tool_run",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._tool_run_retry",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime.tool_respond",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._result",
+          "visual_workflow_hermes/runtime.py::WorkflowDesignerRuntime._respond_impl"
+        ],
+        "path": "visual_workflow_hermes/runtime.py"
+      }
+    },
+    "components": [],
+    "path": "visual_workflow_hermes"
   },
   "repo-operations": {
-    "path": ".",
-    "components": [],
     "children": {
       "build-and-packaging": {
-        "path": "plugin.yaml",
         "components": [
           "pyproject.toml::pyproject.toml",
           "plugin.yaml::plugin.yaml",
@@ -318,10 +327,10 @@
           ".github/workflows/ci.yml::ci.yml",
           ".github/workflows/ci.yml::ci",
           ".hermes/run_live_retry.sh::run_live_retry.sh"
-        ]
+        ],
+        "path": "plugin.yaml"
       },
       "live-probes": {
-        "path": ".hermes",
         "components": [
           ".hermes/live_approval.py::main",
           ".hermes/live_approval_check.py::start",
@@ -348,8 +357,11 @@
           ".hermes/repair_run_status.py::main",
           ".hermes/seam_probe.py::main",
           ".hermes/split_patch.py::main"
-        ]
+        ],
+        "path": ".hermes"
       }
-    }
+    },
+    "components": [],
+    "path": "."
   }
 }

@@ -42,6 +42,7 @@ flowchart LR
 | `save(name, graph)` | Re-validates the graph, then writes atomically; returns the path |
 | `load(name)` | Returns the parsed graph, or raises `FileNotFoundError` / `ValueError` |
 | `list_designs()` | Sorted stems of `*.json` |
+| `delete(name)` | Unlinks the design file; missing file is `FileNotFoundError` |
 
 Names are restricted deliberately: the name becomes a filename, so allowing `../` or an
 absolute path would be a path-traversal bug. A non-string name (JSON is untyped) is a
@@ -66,6 +67,8 @@ hand-written tool argument cannot escape the root.
 | `load(run_id)` | Parsed state; `FileNotFoundError` or `ValueError` |
 | `list_runs()` | Sorted stems |
 | `recent(limit=20)` | Newest-first `[{run_id, updated, state}]`, skipping unreadable files |
+| `delete(run_id)` | Unlinks the run file; missing run is `FileNotFoundError` |
+| `field_paths(design, runs=20)` | `[{node, path}]` from recent *done* runs of `design`, newest first; `path` is `""` for the whole output |
 
 `recent` is what makes the Runs view honest: it reads every file on disk, not just runs this
 browser started, so a run begun by chat or by a cron job is visible and answerable in the

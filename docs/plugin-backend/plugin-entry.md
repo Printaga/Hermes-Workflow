@@ -55,7 +55,7 @@ Each schema is an OpenAI-style body `{"name", "description", "parameters"}` pass
 | `workflow_design_load` | `name` | returns the stored graph |
 | `workflow_design_validate` | `graph` | returns `{node, field, msg}` defects |
 | `workflow_design_run` | `name` | manual run; a scheduled replay uses the same tool |
-| `workflow_design_respond` | `run_id`, `node_id` plus `answer` or `structured` | resume a paused run |
+| `workflow_design_respond` | `run_id`, `node_id` plus `answer` or `structured` | agent-step output only; approval gates are refused |
 
 `workflow_design_respond` uses `anyOf` to require at least one payload field. Without it, a
 resume carrying neither could store `None` as the step's output and advance the run — silent
@@ -67,8 +67,9 @@ statuses a run can return and the exact follow-up tool for each.
 ## What is deliberately absent
 
 There is no `register_status_segment` call: the pinned host (0.22.5) does not expose one, so a
-status segment is not attempted. There are no hooks and no middleware; the plugin is a command,
-five tools, a dashboard router, and a desktop page.
+status segment is not attempted. The one hook is `pre_tool_call` ([delivery gate](delivery-and-channels.md));
+there is no other middleware. The plugin is a command, five tools, one hook, a dashboard
+router, and a desktop page.
 
 ## Loading order and imports
 

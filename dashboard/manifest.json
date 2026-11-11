@@ -3,7 +3,7 @@
   "label": "Workflows",
   "description": "Design and run visual agent workflows \u2014 Trigger, Agent, Condition, Approval and Output nodes on a canvas.",
   "icon": "GitBranch",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "tab": {
     "path": "/workflows",
     "position": "end"
